@@ -1,24 +1,72 @@
-# Logs
-logs
-*.log
+# ========================================
+# StudentOS - Git Ignore
+# ========================================
+
+# ----------------------------------------
+# Environment variables / Secrets
+# ----------------------------------------
+.env
+.env.*
+!.env.example
+
+# ----------------------------------------
+# Python
+# ----------------------------------------
+__pycache__/
+*.py[cod]
+*.pyo
+
+.venv/
+venv/
+env/
+
+# ----------------------------------------
+# Node / React / Vite
+# ----------------------------------------
+node_modules/
+dist/
+dist-ssr/
+build/
+
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-node_modules
-dist
-dist-ssr
-*.local
-
-# Editor directories and files
+# ----------------------------------------
+# IDE / Editor
+# ----------------------------------------
 .vscode/*
 !.vscode/extensions.json
-.idea
-.DS_Store
+.idea/
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
+
+# ----------------------------------------
+# Operating System
+# ----------------------------------------
+.DS_Store
+Thumbs.db
+
+# ----------------------------------------
+# Logs
+# ----------------------------------------
+*.log
+logs/
+
+# ----------------------------------------
+# Python test / coverage files
+# ----------------------------------------
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ----------------------------------------
+# Temporary files
+# ----------------------------------------
+*.tmp
+*.temp

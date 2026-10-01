@@ -1,44 +1,10 @@
+import { useEffect, useState } from "react";
+
 import {
   BookOpen,
   Plus,
   ChevronRight,
 } from "lucide-react";
-
-
-const subjects = [
-  {
-    name: "Database Management Systems",
-    shortName: "DBMS",
-    progress: 72,
-    topics: 12,
-    assignments: 3,
-    color: "blue",
-  },
-  {
-    name: "Object Oriented Programming",
-    shortName: "OOP",
-    progress: 84,
-    topics: 15,
-    assignments: 2,
-    color: "burgundy",
-  },
-  {
-    name: "Data Structures & Algorithms",
-    shortName: "DSA",
-    progress: 61,
-    topics: 18,
-    assignments: 4,
-    color: "blue",
-  },
-  {
-    name: "Logic Design & Microprocessors",
-    shortName: "LDM",
-    progress: 68,
-    topics: 14,
-    assignments: 2,
-    color: "burgundy",
-  },
-];
 
 
 function SubjectCard({ subject }) {
@@ -49,12 +15,11 @@ function SubjectCard({ subject }) {
         <BookOpen size={19} />
       </div>
 
-
       <div className="subject-card-header">
 
         <div>
           <span className="subject-code">
-            {subject.shortName}
+            {subject.short_name}
           </span>
 
           <h3>
@@ -68,18 +33,18 @@ function SubjectCard({ subject }) {
 
       </div>
 
-
       <div className="subject-progress">
 
         <div className="subject-progress-track">
           <div
             className={`subject-progress-fill ${subject.color}`}
-            style={{ width: `${subject.progress}%` }}
+            style={{
+              width: `${subject.progress}%`,
+            }}
           />
         </div>
 
       </div>
-
 
       <div className="subject-meta">
 
@@ -93,7 +58,6 @@ function SubjectCard({ subject }) {
 
       </div>
 
-
       <button className="subject-view-button">
         View subject
         <ChevronRight size={15} />
@@ -105,10 +69,64 @@ function SubjectCard({ subject }) {
 
 
 function Subjects() {
+  const [subjects, setSubjects] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+
+  useEffect(() => {
+    async function fetchSubjects() {
+      try {
+        const response = await fetch(
+          "http://127.0.0.1:8000/subjects"
+        );
+
+        if (!response.ok) {
+          throw new Error(
+            "Failed to fetch subjects"
+          );
+        }
+
+        const data = await response.json();
+
+        setSubjects(data.subjects);
+
+      } catch (error) {
+        console.error(
+          "Error fetching subjects:",
+          error
+        );
+
+        setError(
+          "Unable to load subjects. Make sure the StudentOS backend is running."
+        );
+
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    fetchSubjects();
+  }, []);
+
+
+  const totalTopics = subjects.reduce(
+    (total, subject) =>
+      total + subject.topics,
+    0
+  );
+
+
+  const totalAssignments = subjects.reduce(
+    (total, subject) =>
+      total + subject.assignments,
+    0
+  );
+
+
   return (
     <section className="dashboard-content">
 
-      {/* Page Header */}
       <div className="subjects-header">
 
         <div>
@@ -127,7 +145,6 @@ function Subjects() {
 
         </div>
 
-
         <button className="primary-button">
           <Plus size={16} />
           Add Subject
@@ -136,51 +153,99 @@ function Subjects() {
       </div>
 
 
-      {/* Semester Overview */}
-      <div className="semester-overview">
+      {loading && (
+        <div className="empty-task-state">
 
-        <div>
-          <span className="card-label">
-            CURRENT SEMESTER
-          </span>
+          <BookOpen size={24} />
 
-          <h2>
-            Semester 1
-          </h2>
+          <h3>
+            Loading subjects...
+          </h3>
+
+          <p>
+            Getting your subjects from StudentOS.
+          </p>
+
         </div>
+      )}
 
 
-        <div className="semester-stat">
-          <strong>4</strong>
-          <span>Subjects</span>
+      {!loading && error && (
+        <div className="empty-task-state">
+
+          <BookOpen size={24} />
+
+          <h3>
+            Unable to load subjects
+          </h3>
+
+          <p>
+            {error}
+          </p>
+
         </div>
+      )}
 
 
-        <div className="semester-stat">
-          <strong>59</strong>
-          <span>Total topics</span>
-        </div>
+      {!loading && !error && (
+        <>
+          <div className="semester-overview">
+
+            <div>
+              <span className="card-label">
+                CURRENT SEMESTER
+              </span>
+
+              <h2>
+                Semester 1
+              </h2>
+            </div>
+
+            <div className="semester-stat">
+              <strong>
+                {subjects.length}
+              </strong>
+
+              <span>
+                Subjects
+              </span>
+            </div>
+
+            <div className="semester-stat">
+              <strong>
+                {totalTopics}
+              </strong>
+
+              <span>
+                Total topics
+              </span>
+            </div>
+
+            <div className="semester-stat">
+              <strong>
+                {totalAssignments}
+              </strong>
+
+              <span>
+                Assignments
+              </span>
+            </div>
+
+          </div>
 
 
-        <div className="semester-stat">
-          <strong>11</strong>
-          <span>Assignments</span>
-        </div>
+          <div className="subjects-grid">
 
-      </div>
+            {subjects.map((subject) => (
+              <SubjectCard
+                key={subject.id}
+                subject={subject}
+              />
+            ))}
 
-
-      {/* Subjects */}
-      <div className="subjects-grid">
-
-        {subjects.map((subject) => (
-          <SubjectCard
-            key={subject.shortName}
-            subject={subject}
-          />
-        ))}
-
-      </div>
+          </div>
+        </>
+      )}
 
     </section>
   );
