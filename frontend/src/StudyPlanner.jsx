@@ -1,603 +1,728 @@
-import { useState } from "react";
-
+import { useEffect, useMemo, useState } from "react";
 import {
-  Plus,
+  CalendarDays,
   Clock3,
-  Check,
-  Trash2,
+  Plus,
   BookOpen,
-  Target,
-  ChevronLeft,
-  ChevronRight,
+  Trash2,
+  X,
+  RefreshCw,
 } from "lucide-react";
 
-
-const initialSessions = [
-  {
-    id: 1,
-    day: "MON",
-    time: "4:00 PM",
-    subject: "DBMS",
-    topic: "Normalization",
-    duration: 60,
-    completed: true,
-  },
-
-  {
-    id: 2,
-    day: "MON",
-    time: "6:00 PM",
-    subject: "DSA",
-    topic: "Linked Lists",
-    duration: 45,
-    completed: false,
-  },
-
-  {
-    id: 3,
-    day: "TUE",
-    time: "5:00 PM",
-    subject: "OOP",
-    topic: "Inheritance",
-    duration: 60,
-    completed: false,
-  },
-
-  {
-    id: 4,
-    day: "WED",
-    time: "4:30 PM",
-    subject: "LDM",
-    topic: "Flip-Flops",
-    duration: 45,
-    completed: false,
-  },
-
-  {
-    id: 5,
-    day: "THU",
-    time: "6:00 PM",
-    subject: "DBMS",
-    topic: "ER Diagrams",
-    duration: 60,
-    completed: false,
-  },
-
-  {
-    id: 6,
-    day: "FRI",
-    time: "5:00 PM",
-    subject: "DSA",
-    topic: "Stack Problems",
-    duration: 45,
-    completed: false,
-  },
-
-  {
-    id: 7,
-    day: "SAT",
-    time: "11:00 AM",
-    subject: "OOP",
-    topic: "Constructors",
-    duration: 60,
-    completed: false,
-  },
-
-  {
-    id: 8,
-    day: "SUN",
-    time: "10:00 AM",
-    subject: "Revision",
-    topic: "Weekly Revision",
-    duration: 90,
-    completed: false,
-  },
-];
-
-
-const days = [
-  {
-    short: "MON",
-    name: "Monday",
-  },
-  {
-    short: "TUE",
-    name: "Tuesday",
-  },
-  {
-    short: "WED",
-    name: "Wednesday",
-  },
-  {
-    short: "THU",
-    name: "Thursday",
-  },
-  {
-    short: "FRI",
-    name: "Friday",
-  },
-  {
-    short: "SAT",
-    name: "Saturday",
-  },
-  {
-    short: "SUN",
-    name: "Sunday",
-  },
-];
-
+const API_URL = "http://127.0.0.1:8000";
 
 function StudyPlanner() {
+  const [sessions, setSessions] = useState([]);
+  const [subjects, setSubjects] = useState([]);
 
-  const [selectedDay, setSelectedDay] = useState("MON");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
-  const [sessions, setSessions] =
-    useState(initialSessions);
+  const [showModal, setShowModal] = useState(false);
+  const [saving, setSaving] = useState(false);
 
+  const [formData, setFormData] = useState({
+    subject_id: "",
+    start_time: "",
+    end_time: "",
+    topic: "",
+    notes: "",
+  });
 
-  function toggleSession(id) {
+  // =========================================================
+  // LOAD SUBJECTS + STUDY SESSIONS
+  // =========================================================
 
-    setSessions((currentSessions) => {
+  const loadData = async () => {
+    try {
+      setLoading(true);
+      setError("");
 
-      return currentSessions.map((session) => {
+      const [sessionsResponse, subjectsResponse] = await Promise.all([
+        fetch(`${API_URL}/study-sessions`),
+        fetch(`${API_URL}/subjects`),
+      ]);
 
-        if (session.id === id) {
-
-          return {
-            ...session,
-            completed: !session.completed,
-          };
-
-        }
-
-        return session;
-
-      });
-
-    });
-
-  }
-
-
-  function deleteSession(id) {
-
-    setSessions((currentSessions) =>
-      currentSessions.filter(
-        (session) => session.id !== id
-      )
-    );
-
-  }
-
-
-  const daySessions = sessions.filter(
-    (session) => session.day === selectedDay
-  );
-
-
-  const completedSessions =
-    daySessions.filter(
-      (session) => session.completed
-    );
-
-
-  const totalMinutes =
-    daySessions.reduce(
-      (total, session) =>
-        total + session.duration,
-      0
-    );
-
-
-  const completedMinutes =
-    completedSessions.reduce(
-      (total, session) =>
-        total + session.duration,
-      0
-    );
-
-
-  const progress =
-    totalMinutes === 0
-      ? 0
-      : Math.round(
-          (completedMinutes / totalMinutes) * 100
+      if (!sessionsResponse.ok) {
+        throw new Error(
+          `Failed to load study sessions. Server returned ${sessionsResponse.status}.`
         );
+      }
 
+      if (!subjectsResponse.ok) {
+        throw new Error(
+          `Failed to load subjects. Server returned ${subjectsResponse.status}.`
+        );
+      }
 
-  function addDemoSession() {
+      const sessionsData = await sessionsResponse.json();
+      const subjectsData = await subjectsResponse.json();
 
-    const newSession = {
-      id: Date.now(),
-      day: selectedDay,
-      time: "8:00 PM",
-      subject: "Study Session",
-      topic: "Focused Study",
-      duration: 45,
-      completed: false,
+      console.log("Loaded study sessions:", sessionsData);
+      console.log("Loaded subjects:", subjectsData);
+
+      setSessions(sessionsData.study_sessions || []);
+      setSubjects(subjectsData.subjects || []);
+    } catch (err) {
+      console.error("Load error:", err);
+
+      setError(
+        err.message ||
+          "Unable to connect to StudentOS backend. Make sure FastAPI is running."
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  // =========================================================
+  // FORM HANDLING
+  // =========================================================
+
+  const handleChange = (event) => {
+    const { name, value } = event.target;
+
+    setFormData((previous) => ({
+      ...previous,
+      [name]: value,
+    }));
+  };
+
+  const resetForm = () => {
+    setFormData({
+      subject_id: "",
+      start_time: "",
+      end_time: "",
+      topic: "",
+      notes: "",
+    });
+  };
+
+  const closeModal = () => {
+    if (saving) return;
+
+    setShowModal(false);
+    resetForm();
+  };
+
+  // =========================================================
+  // CREATE STUDY SESSION
+  // =========================================================
+
+  const handleCreateSession = async (event) => {
+    event.preventDefault();
+
+    // Clear old error
+    setError("");
+
+    // -------------------------
+    // VALIDATION
+    // -------------------------
+
+    if (!formData.subject_id) {
+      setError("Please select a subject.");
+      return;
+    }
+
+    if (!formData.start_time || !formData.end_time) {
+      setError("Please select both start and end time.");
+      return;
+    }
+
+    const start = new Date(formData.start_time);
+    const end = new Date(formData.end_time);
+
+    if (
+      Number.isNaN(start.getTime()) ||
+      Number.isNaN(end.getTime())
+    ) {
+      setError("Please enter valid date and time values.");
+      return;
+    }
+
+    if (end <= start) {
+      setError("End time must be after start time.");
+      return;
+    }
+
+    // -------------------------
+    // CALCULATE DURATION
+    // -------------------------
+
+    const durationMinutes = Math.round(
+      (end.getTime() - start.getTime()) / 60000
+    );
+
+    // -------------------------
+    // KEEP LOCAL TIME
+    // -------------------------
+
+    const localStartTime =
+      formData.start_time.length === 16
+        ? `${formData.start_time}:00`
+        : formData.start_time;
+
+    const localEndTime =
+      formData.end_time.length === 16
+        ? `${formData.end_time}:00`
+        : formData.end_time;
+
+    // -------------------------
+    // REQUEST PAYLOAD
+    // -------------------------
+
+    const payload = {
+      subject_id: Number(formData.subject_id),
+      start_time: localStartTime,
+      end_time: localEndTime,
+      duration_minutes: durationMinutes,
+      topic: formData.topic.trim() || null,
+      notes: formData.notes.trim() || null,
     };
 
+    console.log("=================================");
+    console.log("Creating study session...");
+    console.log("Payload:", payload);
+    console.log("=================================");
 
-    setSessions((currentSessions) => [
-      ...currentSessions,
-      newSession,
-    ]);
+    try {
+      setSaving(true);
 
-  }
+      // -------------------------
+      // SEND TO FASTAPI
+      // -------------------------
 
+      const response = await fetch(
+        `${API_URL}/study-sessions`,
+        {
+          method: "POST",
+
+          headers: {
+            "Content-Type": "application/json",
+          },
+
+          body: JSON.stringify(payload),
+        }
+      );
+
+      // Read raw response first
+      const responseText = await response.text();
+
+      console.log("Backend status:", response.status);
+      console.log("Backend response:", responseText);
+
+      // -------------------------
+      // PARSE RESPONSE
+      // -------------------------
+
+      let data;
+
+      try {
+        data = JSON.parse(responseText);
+      } catch {
+        throw new Error(
+          `Backend returned an invalid response. HTTP status: ${response.status}`
+        );
+      }
+
+      // -------------------------
+      // HANDLE BACKEND ERROR
+      // -------------------------
+
+      if (!response.ok) {
+        throw new Error(
+          data.detail ||
+            `Failed to create study session. HTTP ${response.status}`
+        );
+      }
+
+      console.log("Study session created successfully:", data);
+
+      // -------------------------
+      // RELOAD FROM DATABASE
+      // -------------------------
+
+      await loadData();
+
+      // -------------------------
+      // CLOSE MODAL
+      // -------------------------
+
+      setShowModal(false);
+      resetForm();
+
+      console.log("Study session saved and reloaded successfully.");
+
+    } catch (err) {
+      console.error(
+        "================================="
+      );
+
+      console.error("STUDY SESSION SAVE ERROR:", err);
+
+      console.error(
+        "================================="
+      );
+
+      setError(
+        err.message ||
+          "Failed to save study session. Please check the backend."
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // =========================================================
+  // DELETE STUDY SESSION
+  // =========================================================
+
+  const handleDeleteSession = async (sessionId) => {
+    const confirmed = window.confirm(
+      "Are you sure you want to delete this study session?"
+    );
+
+    if (!confirmed) return;
+
+    try {
+      setError("");
+
+      const response = await fetch(
+        `${API_URL}/study-sessions/${sessionId}`,
+        {
+          method: "DELETE",
+        }
+      );
+
+      const responseText = await response.text();
+
+      let data;
+
+      try {
+        data = JSON.parse(responseText);
+      } catch {
+        throw new Error(
+          `Backend returned an invalid response. HTTP status: ${response.status}`
+        );
+      }
+
+      if (!response.ok) {
+        throw new Error(
+          data.detail ||
+            `Failed to delete study session. HTTP ${response.status}`
+        );
+      }
+
+      console.log("Deleted study session:", data);
+
+      // Reload directly from backend
+      await loadData();
+
+    } catch (err) {
+      console.error("Delete error:", err);
+
+      setError(
+        err.message || "Failed to delete study session."
+      );
+    }
+  };
+
+  // =========================================================
+  // CALCULATE TOTAL STUDY TIME
+  // =========================================================
+
+  const totalMinutes = useMemo(() => {
+    return sessions.reduce(
+      (total, session) =>
+        total + Number(session.duration_minutes || 0),
+      0
+    );
+  }, [sessions]);
+
+  const totalHours = Math.floor(totalMinutes / 60);
+
+  const remainingMinutes = totalMinutes % 60;
+
+  // =========================================================
+  // FORMAT DATE
+  // =========================================================
+
+  const formatDate = (dateValue) => {
+    if (!dateValue) {
+      return "No date";
+    }
+
+    const date = new Date(dateValue);
+
+    if (Number.isNaN(date.getTime())) {
+      return dateValue;
+    }
+
+    return date.toLocaleDateString("en-IN", {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    });
+  };
+
+  // =========================================================
+  // FORMAT TIME
+  // =========================================================
+
+  const formatTime = (dateValue) => {
+    if (!dateValue) {
+      return "";
+    }
+
+    const date = new Date(dateValue);
+
+    if (Number.isNaN(date.getTime())) {
+      return "";
+    }
+
+    return date.toLocaleTimeString("en-IN", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  };
+
+  // =========================================================
+  // RENDER
+  // =========================================================
 
   return (
+    <section className="planner-page">
 
-    <section className="dashboard-content">
-
-
-      {/* ========================================
-          HEADER
-          ======================================== */}
+      {/* =====================================================
+          PAGE HEADER
+          ===================================================== */}
 
       <div className="planner-header">
 
         <div>
-
           <span className="eyebrow">
-            WEEKLY ACADEMIC PLANNING
+            STUDY PLANNER
           </span>
 
           <h1>
-            Study Planner
+            Plan your study sessions.
           </h1>
 
           <p>
-            Organize your study sessions and stay consistent throughout the week.
+            Track focused study time and build a consistent
+            academic routine.
           </p>
+        </div>
+
+        <div className="planner-header-actions">
+
+          <button
+            className="secondary-button"
+            onClick={loadData}
+            disabled={loading}
+          >
+            <RefreshCw size={16} />
+
+            Refresh
+          </button>
+
+          <button
+            className="primary-button"
+            onClick={() => {
+              setError("");
+              setShowModal(true);
+            }}
+          >
+            <Plus size={16} />
+
+            Add Study Session
+          </button>
 
         </div>
 
-
-        <button
-          className="primary-button"
-          onClick={addDemoSession}
-        >
-
-          <Plus size={16} />
-
-          Add Session
-
-        </button>
-
       </div>
 
+      {/* =====================================================
+          ERROR MESSAGE
+          ===================================================== */}
 
-      {/* ========================================
-          WEEK SELECTOR
-          ======================================== */}
+      {error && (
+        <div className="planner-error">
+          {error}
+        </div>
+      )}
 
-      <div className="planner-week">
+      {/* =====================================================
+          SUMMARY CARDS
+          ===================================================== */}
 
-        <button
-          className="week-arrow"
-          aria-label="Previous week"
-        >
-          <ChevronLeft size={18} />
-        </button>
+      <div className="planner-summary-grid">
 
+        {/* TOTAL STUDY TIME */}
 
-        <div className="week-days">
+        <div className="planner-summary-card">
 
-          {days.map((day) => (
+          <div className="planner-summary-icon">
+            <Clock3 size={20} />
+          </div>
 
-            <button
-              key={day.short}
-              className={
-                `week-day ${
-                  selectedDay === day.short
-                    ? "active"
-                    : ""
-                }`
+          <div>
+
+            <span>
+              Total Study Time
+            </span>
+
+            <strong>
+              {totalHours}h {remainingMinutes}m
+            </strong>
+
+          </div>
+
+        </div>
+
+        {/* STUDY SESSIONS */}
+
+        <div className="planner-summary-card">
+
+          <div className="planner-summary-icon">
+            <CalendarDays size={20} />
+          </div>
+
+          <div>
+
+            <span>
+              Study Sessions
+            </span>
+
+            <strong>
+              {sessions.length}
+            </strong>
+
+          </div>
+
+        </div>
+
+        {/* SUBJECTS STUDIED */}
+
+        <div className="planner-summary-card">
+
+          <div className="planner-summary-icon">
+            <BookOpen size={20} />
+          </div>
+
+          <div>
+
+            <span>
+              Subjects Studied
+            </span>
+
+            <strong>
+              {
+                new Set(
+                  sessions.map(
+                    (session) =>
+                      session.subject_id
+                  )
+                ).size
               }
-              onClick={() =>
-                setSelectedDay(day.short)
-              }
-            >
+            </strong>
 
-              <span>
-                {day.short}
-              </span>
-
-              <strong>
-                {day.short === "MON"
-                  ? "30"
-                  : day.short === "TUE"
-                  ? "1"
-                  : day.short === "WED"
-                  ? "2"
-                  : day.short === "THU"
-                  ? "3"
-                  : day.short === "FRI"
-                  ? "4"
-                  : day.short === "SAT"
-                  ? "5"
-                  : "6"}
-              </strong>
-
-            </button>
-
-          ))}
-
-        </div>
-
-
-        <button
-          className="week-arrow"
-          aria-label="Next week"
-        >
-          <ChevronRight size={18} />
-        </button>
-
-      </div>
-
-
-      {/* ========================================
-          DAY OVERVIEW
-          ======================================== */}
-
-      <div className="planner-overview">
-
-
-        <div className="planner-overview-main">
-
-          <span className="card-label">
-            SELECTED DAY
-          </span>
-
-          <h2>
-            {
-              days.find(
-                (day) =>
-                  day.short === selectedDay
-              )?.name
-            }
-          </h2>
-
-          <p>
-            {daySessions.length} study sessions planned
-          </p>
-
-        </div>
-
-
-        <div className="planner-stat">
-
-          <Clock3 size={18} />
-
-          <strong>
-            {Math.floor(totalMinutes / 60)}h{" "}
-            {totalMinutes % 60}m
-          </strong>
-
-          <span>
-            Planned
-          </span>
-
-        </div>
-
-
-        <div className="planner-stat">
-
-          <Check size={18} />
-
-          <strong>
-            {completedSessions.length}
-          </strong>
-
-          <span>
-            Completed
-          </span>
-
-        </div>
-
-
-        <div className="planner-stat">
-
-          <Target size={18} />
-
-          <strong>
-            {progress}%
-          </strong>
-
-          <span>
-            Daily progress
-          </span>
+          </div>
 
         </div>
 
       </div>
 
+      {/* =====================================================
+          STUDY SESSIONS
+          ===================================================== */}
 
-      {/* ========================================
-          PROGRESS
-          ======================================== */}
+      <div className="planner-section">
 
-      <div className="planner-progress-card">
+        {/* SECTION HEADER */}
 
-        <div className="planner-progress-header">
+        <div className="planner-section-header">
 
           <div>
 
             <span className="card-label">
-              DAILY GOAL
+              ACTIVITY
             </span>
 
-            <h3>
-              Keep your study streak going
-            </h3>
+            <h2>
+              Study Sessions
+            </h2>
 
           </div>
 
-          <strong>
-            {progress}%
-          </strong>
-
         </div>
 
+        {/* =================================================
+            LOADING
+            ================================================= */}
 
-        <div className="planner-progress-track">
+        {loading ? (
 
-          <div
-            className="planner-progress-fill"
-            style={{
-              width: `${progress}%`,
-            }}
-          />
+          <div className="planner-empty-state">
 
-        </div>
+            <RefreshCw
+              className="planner-loading-icon"
+              size={24}
+            />
 
-      </div>
+            <p>
+              Loading study sessions...
+            </p>
 
+          </div>
 
-      {/* ========================================
-          SESSIONS
-          ======================================== */}
+        ) : sessions.length === 0 ? (
 
-      <div className="planner-section-header">
+          /* =================================================
+             EMPTY STATE
+             ================================================= */
 
-        <div>
+          <div className="planner-empty-state">
 
-          <span className="card-label">
-            STUDY SESSIONS
-          </span>
+            <div className="planner-empty-icon">
 
-          <h2>
-            Today's plan
-          </h2>
+              <CalendarDays
+                size={28}
+              />
 
-        </div>
-
-      </div>
-
-
-      <div className="planner-sessions">
-
-        {daySessions.length > 0 ? (
-
-          daySessions.map((session) => (
-
-            <article
-              key={session.id}
-              className={
-                `planner-session ${
-                  session.completed
-                    ? "completed"
-                    : ""
-                }`
-              }
-            >
-
-
-              {/* Time */}
-
-              <div className="session-time">
-
-                <strong>
-                  {session.time}
-                </strong>
-
-                <span>
-                  {session.duration} min
-                </span>
-
-              </div>
-
-
-              {/* Icon */}
-
-              <div className="session-icon">
-
-                <BookOpen size={18} />
-
-              </div>
-
-
-              {/* Content */}
-
-              <div className="session-content">
-
-                <h3>
-                  {session.topic}
-                </h3>
-
-                <span>
-                  {session.subject}
-                </span>
-
-              </div>
-
-
-              {/* Actions */}
-
-              <div className="session-actions">
-
-                <button
-                  className={
-                    `session-complete ${
-                      session.completed
-                        ? "done"
-                        : ""
-                    }`
-                  }
-                  onClick={() =>
-                    toggleSession(session.id)
-                  }
-                  aria-label="Complete session"
-                >
-
-                  <Check size={15} />
-
-                </button>
-
-
-                <button
-                  className="session-delete"
-                  onClick={() =>
-                    deleteSession(session.id)
-                  }
-                  aria-label="Delete session"
-                >
-
-                  <Trash2 size={15} />
-
-                </button>
-
-              </div>
-
-            </article>
-
-          ))
-
-        ) : (
-
-          <div className="planner-empty">
-
-            <BookOpen size={25} />
+            </div>
 
             <h3>
-              No study sessions
+              No study sessions yet
             </h3>
 
             <p>
-              Add a session to start planning this day.
+              Start tracking your study time by adding
+              your first session.
             </p>
 
-            <button
-              className="secondary-button"
-              onClick={addDemoSession}
-            >
+          </div>
 
-              <Plus size={14} />
+        ) : (
 
-              Add study session
+          /* =================================================
+             SESSION LIST
+             ================================================= */
 
-            </button>
+          <div className="planner-session-list">
+
+            {sessions.map((session) => (
+
+              <div
+                className="planner-session-card"
+                key={session.id}
+              >
+
+                <div className="planner-session-main">
+
+                  <div className="planner-session-icon">
+
+                    <BookOpen
+                      size={19}
+                    />
+
+                  </div>
+
+                  <div className="planner-session-info">
+
+                    <div className="planner-session-title-row">
+
+                      <h3>
+                        {session.topic ||
+                          "Study Session"}
+                      </h3>
+
+                      <span className="planner-subject-badge">
+
+                        {session.subject_short_name ||
+                          session.subject_name}
+
+                      </span>
+
+                    </div>
+
+                    <p>
+                      {session.subject_name ||
+                        "Unknown subject"}
+                    </p>
+
+                    <div className="planner-session-meta">
+
+                      <span>
+
+                        <CalendarDays
+                          size={14}
+                        />
+
+                        {formatDate(
+                          session.start_time
+                        )}
+
+                      </span>
+
+                      <span>
+
+                        <Clock3
+                          size={14}
+                        />
+
+                        {formatTime(
+                          session.start_time
+                        )}
+
+                        {" – "}
+
+                        {formatTime(
+                          session.end_time
+                        )}
+
+                      </span>
+
+                      <span>
+                        {session.duration_minutes} min
+                      </span>
+
+                    </div>
+
+                    {session.notes && (
+
+                      <div className="planner-session-notes">
+
+                        {session.notes}
+
+                      </div>
+
+                    )}
+
+                  </div>
+
+                </div>
+
+                <button
+                  className="planner-delete-button"
+                  onClick={() =>
+                    handleDeleteSession(
+                      session.id
+                    )
+                  }
+                  aria-label="Delete study session"
+                  title="Delete study session"
+                >
+                  <Trash2 size={17} />
+                </button>
+
+              </div>
+
+            ))}
 
           </div>
 
@@ -605,12 +730,223 @@ function StudyPlanner() {
 
       </div>
 
+      {/* =====================================================
+          ADD SESSION MODAL
+          ===================================================== */}
+
+      {showModal && (
+
+        <div
+          className="planner-modal-overlay"
+          onMouseDown={(event) => {
+
+            if (
+              event.target ===
+              event.currentTarget
+            ) {
+              closeModal();
+            }
+
+          }}
+        >
+
+          <div className="planner-modal">
+
+            {/* MODAL HEADER */}
+
+            <div className="planner-modal-header">
+
+              <div>
+
+                <span className="eyebrow">
+                  NEW SESSION
+                </span>
+
+                <h2>
+                  Add Study Session
+                </h2>
+
+              </div>
+
+              <button
+                className="planner-modal-close"
+                onClick={closeModal}
+                aria-label="Close"
+                disabled={saving}
+              >
+                <X size={20} />
+              </button>
+
+            </div>
+
+            {/* FORM */}
+
+            <form
+              className="planner-form"
+              onSubmit={handleCreateSession}
+            >
+
+              {/* SUBJECT */}
+
+              <div className="planner-form-group">
+
+                <label htmlFor="subject_id">
+                  Subject
+                </label>
+
+                <select
+                  id="subject_id"
+                  name="subject_id"
+                  value={formData.subject_id}
+                  onChange={handleChange}
+                  required
+                >
+
+                  <option value="">
+                    Select a subject
+                  </option>
+
+                  {subjects.map(
+                    (subject) => (
+
+                      <option
+                        key={subject.id}
+                        value={subject.id}
+                      >
+                        {subject.name}
+                      </option>
+
+                    )
+                  )}
+
+                </select>
+
+              </div>
+
+              {/* START + END */}
+
+              <div className="planner-form-row">
+
+                <div className="planner-form-group">
+
+                  <label htmlFor="start_time">
+                    Start Time
+                  </label>
+
+                  <input
+                    id="start_time"
+                    name="start_time"
+                    type="datetime-local"
+                    value={formData.start_time}
+                    onChange={handleChange}
+                    required
+                  />
+
+                </div>
+
+                <div className="planner-form-group">
+
+                  <label htmlFor="end_time">
+                    End Time
+                  </label>
+
+                  <input
+                    id="end_time"
+                    name="end_time"
+                    type="datetime-local"
+                    value={formData.end_time}
+                    onChange={handleChange}
+                    required
+                  />
+
+                </div>
+
+              </div>
+
+              {/* TOPIC */}
+
+              <div className="planner-form-group">
+
+                <label htmlFor="topic">
+                  Topic
+                </label>
+
+                <input
+                  id="topic"
+                  name="topic"
+                  type="text"
+                  placeholder="e.g. C++ Inheritance"
+                  value={formData.topic}
+                  onChange={handleChange}
+                />
+
+              </div>
+
+              {/* NOTES */}
+
+              <div className="planner-form-group">
+
+                <label htmlFor="notes">
+                  Notes
+                </label>
+
+                <textarea
+                  id="notes"
+                  name="notes"
+                  rows="4"
+                  placeholder="What did you study?"
+                  value={formData.notes}
+                  onChange={handleChange}
+                />
+
+              </div>
+
+              {/* ACTIONS */}
+
+              <div className="planner-form-actions">
+
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={closeModal}
+                  disabled={saving}
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="submit"
+                  className="primary-button"
+                  disabled={saving}
+                >
+
+                  {saving ? (
+
+                    "Saving..."
+
+                  ) : (
+
+                    <>
+                      <Plus size={16} />
+                      Save Session
+                    </>
+
+                  )}
+
+                </button>
+
+              </div>
+
+            </form>
+
+          </div>
+
+        </div>
+
+      )}
 
     </section>
-
   );
-
 }
-
 
 export default StudyPlanner;
