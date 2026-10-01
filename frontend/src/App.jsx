@@ -20,6 +20,7 @@ import {
 } from "react-router-dom";
 
 import Subjects from "./Subjects.jsx";
+import SubjectDetails from "./SubjectDetails.jsx";
 import Tasks from "./Tasks.jsx";
 import StudyPlanner from "./StudyPlanner.jsx";
 import AIAssistant from "./AIAssistant.jsx";
@@ -410,6 +411,11 @@ function App() {
           <Route
             path="/subjects"
             element={<Subjects />}
+          />
+
+          <Route
+            path="/subjects/:subjectId"
+            element={<SubjectDetails />}
           />
 
           <Route
