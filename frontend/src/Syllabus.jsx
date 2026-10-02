@@ -22,6 +22,7 @@ function Syllabus() {
   const [expandedUnits, setExpandedUnits] = useState({});
   const [loadingSubjects, setLoadingSubjects] = useState(true);
   const [loadingSyllabus, setLoadingSyllabus] = useState(false);
+  const [updatingTopic, setUpdatingTopic] = useState(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -54,6 +55,7 @@ function Syllabus() {
       }
     } catch (err) {
       console.error(err);
+
       setError(
         "Could not connect to the StudentOS backend. Make sure FastAPI is running."
       );
@@ -88,7 +90,6 @@ function Syllabus() {
       console.error(err);
 
       setSyllabus(null);
-
       setError("Could not load the syllabus for this subject.");
     } finally {
       setLoadingSyllabus(false);
@@ -100,6 +101,94 @@ function Syllabus() {
       ...previous,
       [unitId]: !previous[unitId],
     }));
+  }
+
+  function getNextStatus(currentStatus) {
+    if (currentStatus === "Not Started") {
+      return "In Progress";
+    }
+
+    if (currentStatus === "In Progress") {
+      return "Completed";
+    }
+
+    return "Not Started";
+  }
+
+  function getMasteryForStatus(status) {
+    switch (status) {
+      case "Completed":
+        return 100;
+
+      case "In Progress":
+        return 50;
+
+      case "Not Started":
+      default:
+        return 0;
+    }
+  }
+
+  async function updateTopicStatus(topicId, currentStatus) {
+    const nextStatus = getNextStatus(currentStatus);
+    const nextMastery = getMasteryForStatus(nextStatus);
+
+    try {
+      setUpdatingTopic(topicId);
+      setError("");
+
+      const response = await fetch(
+        `${API_URL}/syllabus/topics/${topicId}`,
+        {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            status: nextStatus,
+            mastery: nextMastery,
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error("Failed to update topic");
+      }
+
+      const updatedTopic = await response.json();
+
+      setSyllabus((previous) => {
+        if (!previous) {
+          return previous;
+        }
+
+        return {
+          ...previous,
+
+          units: previous.units.map((unit) => ({
+            ...unit,
+
+            topics: unit.topics.map((topic) =>
+              topic.topic_id === updatedTopic.id
+                ? {
+                    ...topic,
+                    status: updatedTopic.status,
+                    mastery: updatedTopic.mastery,
+                  }
+                : topic
+            ),
+          })),
+        };
+      });
+    } catch (err) {
+      console.error(err);
+
+      setError(
+        "Could not update the topic. Make sure FastAPI is running."
+      );
+    } finally {
+      setUpdatingTopic(null);
+    }
   }
 
   function getStatusIcon(status) {
@@ -138,7 +227,9 @@ function Syllabus() {
     syllabus?.units?.reduce(
       (total, unit) =>
         total +
-        unit.topics.filter((topic) => topic.status === "Completed").length,
+        unit.topics.filter(
+          (topic) => topic.status === "Completed"
+        ).length,
       0
     ) || 0;
 
@@ -146,9 +237,14 @@ function Syllabus() {
     syllabus?.units?.reduce(
       (total, unit) =>
         total +
-        unit.topics.filter((topic) => topic.status === "In Progress").length,
+        unit.topics.filter(
+          (topic) => topic.status === "In Progress"
+        ).length,
       0
     ) || 0;
+
+  const notStartedTopics =
+    totalTopics - completedTopics - inProgressTopics;
 
   const syllabusCoverage =
     totalTopics > 0
@@ -157,21 +253,21 @@ function Syllabus() {
 
   return (
     <div className="syllabus-page">
-      {/* PAGE HEADER */}
+
+      {/* HEADER */}
 
       <div className="syllabus-header">
-        <div>
-          <div className="syllabus-title-row">
-            <div className="syllabus-title-icon">
-              <BookOpen size={25} />
-            </div>
+        <div className="syllabus-title-row">
+          <div className="syllabus-title-icon">
+            <BookOpen size={25} />
+          </div>
 
-            <div>
-              <h1>Syllabus</h1>
-              <p>
-                Explore your subjects, units and topics in one place.
-              </p>
-            </div>
+          <div>
+            <h1>Syllabus</h1>
+
+            <p>
+              Explore your subjects, units and topics in one place.
+            </p>
           </div>
         </div>
 
@@ -184,12 +280,14 @@ function Syllabus() {
               loadSubjects();
             }
           }}
+          disabled={loadingSyllabus}
         >
           <RefreshCw
             size={17}
             className={loadingSyllabus ? "spin-icon" : ""}
           />
-          Refresh
+
+          <span>Refresh</span>
         </button>
       </div>
 
@@ -198,6 +296,7 @@ function Syllabus() {
       {error && (
         <div className="syllabus-error">
           <AlertCircle size={18} />
+
           <span>{error}</span>
         </div>
       )}
@@ -207,7 +306,10 @@ function Syllabus() {
       <section className="syllabus-subject-section">
         <div className="section-heading">
           <div>
-            <span className="section-eyebrow">YOUR SUBJECTS</span>
+            <span className="section-eyebrow">
+              YOUR SUBJECTS
+            </span>
+
             <h2>Select a subject</h2>
           </div>
         </div>
@@ -219,7 +321,9 @@ function Syllabus() {
         ) : subjects.length === 0 ? (
           <div className="syllabus-empty">
             <BookOpen size={30} />
+
             <h3>No subjects found</h3>
+
             <p>
               Add a subject first from the Subjects section.
             </p>
@@ -249,10 +353,13 @@ function Syllabus() {
         )}
       </section>
 
-      {/* SYLLABUS CONTENT */}
+      {/* CONTENT */}
 
       {selectedSubject && (
         <section className="syllabus-content-section">
+
+          {/* OVERVIEW */}
+
           <div className="syllabus-overview">
             <div className="syllabus-overview-main">
               <span className="overview-label">
@@ -260,7 +367,8 @@ function Syllabus() {
               </span>
 
               <h2>
-                {syllabus?.subject_name || selectedSubject.name}
+                {syllabus?.subject_name ||
+                  selectedSubject.name}
               </h2>
 
               <p>
@@ -290,7 +398,7 @@ function Syllabus() {
             </div>
           </div>
 
-          {/* PROGRESS BAR */}
+          {/* PROGRESS */}
 
           <div className="syllabus-progress-card">
             <div className="progress-card-top">
@@ -300,7 +408,8 @@ function Syllabus() {
                 </span>
 
                 <h3>
-                  {completedTopics} of {totalTopics} topics completed
+                  {completedTopics} of {totalTopics} topics
+                  completed
                 </h3>
               </div>
 
@@ -329,10 +438,7 @@ function Syllabus() {
 
               <span>
                 <Circle size={14} />
-                {totalTopics -
-                  completedTopics -
-                  inProgressTopics}{" "}
-                not started
+                {notStartedTopics} not started
               </span>
             </div>
           </div>
@@ -354,15 +460,16 @@ function Syllabus() {
               <div className="syllabus-loading">
                 Loading syllabus...
               </div>
-            ) : !syllabus || syllabus.units.length === 0 ? (
+            ) : !syllabus ||
+              syllabus.units.length === 0 ? (
               <div className="syllabus-empty">
                 <BookOpen size={30} />
 
                 <h3>No syllabus added yet</h3>
 
                 <p>
-                  This subject does not have any syllabus units
-                  yet.
+                  This subject does not have any syllabus
+                  units yet.
                 </p>
               </div>
             ) : (
@@ -376,6 +483,9 @@ function Syllabus() {
                       className="unit-card"
                       key={unit.unit_id}
                     >
+
+                      {/* UNIT HEADER */}
+
                       <button
                         className="unit-header"
                         onClick={() =>
@@ -412,6 +522,8 @@ function Syllabus() {
                         </div>
                       </button>
 
+                      {/* TOPICS */}
+
                       {isExpanded && (
                         <div className="topics-container">
                           {unit.topics.length === 0 ? (
@@ -425,35 +537,68 @@ function Syllabus() {
                                 className="topic-row"
                                 key={topic.topic_id}
                               >
+
                                 <div className="topic-main">
-                                  <div
-                                    className={`topic-status-icon ${getStatusClass(
+
+                                  {/* STATUS ICON */}
+
+                                  <button
+                                    className={`topic-status-button ${getStatusClass(
                                       topic.status
                                     )}`}
+                                    onClick={() =>
+                                      updateTopicStatus(
+                                        topic.topic_id,
+                                        topic.status
+                                      )
+                                    }
+                                    disabled={
+                                      updatingTopic ===
+                                      topic.topic_id
+                                    }
+                                    title="Click to change status"
                                   >
                                     {getStatusIcon(
                                       topic.status
                                     )}
-                                  </div>
+                                  </button>
+
+                                  {/* TOPIC INFO */}
 
                                   <div className="topic-info">
                                     <h4>
                                       {topic.topic_name}
                                     </h4>
 
-                                    <span
-                                      className={`topic-status ${getStatusClass(
+                                    <button
+                                      className={`topic-status-button-text ${getStatusClass(
                                         topic.status
                                       )}`}
+                                      onClick={() =>
+                                        updateTopicStatus(
+                                          topic.topic_id,
+                                          topic.status
+                                        )
+                                      }
+                                      disabled={
+                                        updatingTopic ===
+                                        topic.topic_id
+                                      }
                                     >
-                                      {topic.status}
-                                    </span>
+                                      {updatingTopic ===
+                                      topic.topic_id
+                                        ? "Updating..."
+                                        : topic.status}
+                                    </button>
                                   </div>
                                 </div>
+
+                                {/* MASTERY */}
 
                                 <div className="topic-mastery">
                                   <div className="mastery-top">
                                     <span>Mastery</span>
+
                                     <strong>
                                       {topic.mastery}%
                                     </strong>
@@ -468,6 +613,7 @@ function Syllabus() {
                                     />
                                   </div>
                                 </div>
+
                               </div>
                             ))
                           )}

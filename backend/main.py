@@ -1,11 +1,20 @@
 from datetime import datetime, date
+from io import BytesIO
 
-from fastapi import FastAPI, HTTPException
+from fastapi import (
+    FastAPI,
+    HTTPException,
+    UploadFile,
+    File,
+    Form,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy import text
+from pypdf import PdfReader
 
 from database import engine
+from syllabus_parser import parse_syllabus
 
 
 # ============================================================
@@ -336,6 +345,7 @@ def get_tasks():
         tasks = []
 
         for row in result:
+
             task = dict(row._mapping)
 
             if isinstance(task.get("due_date"), date):
@@ -401,7 +411,6 @@ def create_task(task: TaskCreate):
 
     with engine.begin() as connection:
 
-        # Check subject exists
         subject_result = connection.execute(
             text("""
                 SELECT id
@@ -653,7 +662,6 @@ def create_study_session(
 
     with engine.begin() as connection:
 
-        # Verify subject exists
         subject_result = connection.execute(
             text("""
                 SELECT id
@@ -911,7 +919,6 @@ def get_subject_syllabus(subject_id: int):
 
     with engine.connect() as connection:
 
-        # Check subject
         subject_result = connection.execute(
             text("""
                 SELECT
@@ -936,7 +943,6 @@ def get_subject_syllabus(subject_id: int):
 
         subject = dict(subject_row._mapping)
 
-        # Get units and topics
         result = connection.execute(
             text("""
                 SELECT
@@ -1012,7 +1018,6 @@ def create_syllabus_unit(
 
     with engine.begin() as connection:
 
-        # Verify subject
         subject_result = connection.execute(
             text("""
                 SELECT id
@@ -1071,7 +1076,6 @@ def create_syllabus_topic(
     topic: SyllabusTopicCreate
 ):
 
-    # Validate mastery
     if topic.mastery < 0 or topic.mastery > 100:
         raise HTTPException(
             status_code=400,
@@ -1080,7 +1084,6 @@ def create_syllabus_topic(
 
     with engine.begin() as connection:
 
-        # Verify unit exists
         unit_result = connection.execute(
             text("""
                 SELECT id
@@ -1256,6 +1259,454 @@ def delete_syllabus_topic(topic_id: int):
             "message": "Syllabus topic deleted successfully",
             "id": topic_id,
         }
+
+
+# ============================================================
+# PDF SYLLABUS EXTRACTION
+# ============================================================
+
+@app.post("/syllabus/upload")
+async def upload_syllabus_pdf(
+    file: UploadFile = File(...)
+):
+
+    if not file.filename:
+        raise HTTPException(
+            status_code=400,
+            detail="No file selected"
+        )
+
+    if not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(
+            status_code=400,
+            detail="Only PDF files are supported"
+        )
+
+    file_bytes = await file.read()
+
+    if not file_bytes:
+        raise HTTPException(
+            status_code=400,
+            detail="Uploaded PDF is empty"
+        )
+
+    try:
+
+        pdf_stream = BytesIO(file_bytes)
+        reader = PdfReader(pdf_stream)
+
+        extracted_pages = []
+
+        for page in reader.pages:
+
+            page_text = page.extract_text()
+
+            if page_text:
+                extracted_pages.append(
+                    page_text.strip()
+                )
+
+        extracted_text = "\n\n".join(
+            extracted_pages
+        ).strip()
+
+    except Exception as error:
+
+        raise HTTPException(
+            status_code=400,
+            detail=f"Could not read PDF: {str(error)}"
+        )
+
+    if not extracted_text:
+
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "No readable text was found in this PDF. "
+                "The PDF may contain scanned images instead of text."
+            )
+        )
+
+    return {
+        "message": "PDF text extracted successfully",
+        "filename": file.filename,
+        "pages": len(reader.pages),
+        "characters": len(extracted_text),
+        "text": extracted_text,
+    }
+
+
+# ============================================================
+# SYLLABUS IMPORT
+# ============================================================
+
+@app.post("/syllabus/import")
+async def import_syllabus(
+    subject_id: int = Form(...),
+    course_code: str = Form(...),
+    file: UploadFile = File(...),
+):
+    """
+    Parse a syllabus PDF and import ONE selected course
+    into ONE StudentOS subject.
+
+    Example:
+
+        subject_id = 3
+        course_code = CS2305
+
+    The parser searches the uploaded PDF for CS2305,
+    extracts its units and topics, and stores them
+    under the selected StudentOS subject.
+    """
+
+    # --------------------------------------------------------
+    # Validate file
+    # --------------------------------------------------------
+
+    if not file.filename:
+
+        raise HTTPException(
+            status_code=400,
+            detail="No PDF file selected"
+        )
+
+    if not file.filename.lower().endswith(".pdf"):
+
+        raise HTTPException(
+            status_code=400,
+            detail="Only PDF files are supported"
+        )
+
+    course_code = course_code.strip().upper()
+
+    if not course_code:
+
+        raise HTTPException(
+            status_code=400,
+            detail="Course code cannot be empty"
+        )
+
+    # --------------------------------------------------------
+    # Read PDF
+    # --------------------------------------------------------
+
+    file_bytes = await file.read()
+
+    if not file_bytes:
+
+        raise HTTPException(
+            status_code=400,
+            detail="Uploaded PDF is empty"
+        )
+
+    # --------------------------------------------------------
+    # Extract PDF text
+    # --------------------------------------------------------
+
+    try:
+
+        pdf_stream = BytesIO(file_bytes)
+
+        reader = PdfReader(pdf_stream)
+
+        extracted_pages = []
+
+        for page in reader.pages:
+
+            page_text = page.extract_text()
+
+            if page_text:
+
+                extracted_pages.append(
+                    page_text.strip()
+                )
+
+        extracted_text = "\n\n".join(
+            extracted_pages
+        ).strip()
+
+    except Exception as error:
+
+        raise HTTPException(
+            status_code=400,
+            detail=f"Could not read PDF: {str(error)}"
+        )
+
+    if not extracted_text:
+
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "No readable text was found in this PDF. "
+                "The PDF may contain scanned images."
+            )
+        )
+
+    # --------------------------------------------------------
+    # Parse syllabus
+    # --------------------------------------------------------
+
+    try:
+
+        parsed = parse_syllabus(
+            extracted_text
+        )
+
+    except Exception as error:
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"Syllabus parsing failed: {str(error)}"
+        )
+
+    # --------------------------------------------------------
+    # Find requested course
+    # --------------------------------------------------------
+
+    selected_course = None
+
+    for course in parsed.get("courses", []):
+
+        if (
+            course.get("course_code", "").upper()
+            == course_code
+        ):
+
+            selected_course = course
+            break
+
+    if selected_course is None:
+
+        available_courses = [
+            {
+                "course_code": course.get(
+                    "course_code"
+                ),
+                "course_name": course.get(
+                    "course_name"
+                ),
+            }
+            for course in parsed.get("courses", [])
+        ]
+
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "message": (
+                    f"Course code '{course_code}' "
+                    "was not found in the uploaded PDF."
+                ),
+                "available_courses": available_courses,
+            },
+        )
+
+    # --------------------------------------------------------
+    # Import into PostgreSQL
+    # --------------------------------------------------------
+
+    try:
+
+        with engine.begin() as connection:
+
+            # ------------------------------------------------
+            # Verify StudentOS subject
+            # ------------------------------------------------
+
+            subject_result = connection.execute(
+                text("""
+                    SELECT
+                        id,
+                        name,
+                        short_name
+                    FROM subjects
+                    WHERE id = :subject_id
+                """),
+                {
+                    "subject_id": subject_id
+                },
+            )
+
+            subject = subject_result.fetchone()
+
+            if not subject:
+
+                raise HTTPException(
+                    status_code=404,
+                    detail="StudentOS subject not found"
+                )
+
+            subject_data = dict(
+                subject._mapping
+            )
+
+            # ------------------------------------------------
+            # Remove existing syllabus for this subject
+            #
+            # Because syllabus_topics references
+            # syllabus_units with ON DELETE CASCADE,
+            # deleting the units also deletes their topics.
+            # ------------------------------------------------
+
+            connection.execute(
+                text("""
+                    DELETE FROM syllabus_units
+                    WHERE subject_id = :subject_id
+                """),
+                {
+                    "subject_id": subject_id
+                },
+            )
+
+            # ------------------------------------------------
+            # Insert units and topics
+            # ------------------------------------------------
+
+            imported_units = 0
+            imported_topics = 0
+
+            unit_summaries = []
+
+            for unit in selected_course.get(
+                "units",
+                []
+            ):
+
+                unit_result = connection.execute(
+                    text("""
+                        INSERT INTO syllabus_units (
+                            subject_id,
+                            unit_number,
+                            unit_name
+                        )
+                        VALUES (
+                            :subject_id,
+                            :unit_number,
+                            :unit_name
+                        )
+                        RETURNING id
+                    """),
+                    {
+                        "subject_id": subject_id,
+                        "unit_number": unit[
+                            "unit_number"
+                        ],
+                        "unit_name": unit[
+                            "unit_name"
+                        ],
+                    },
+                )
+
+                unit_row = unit_result.fetchone()
+
+                if not unit_row:
+                    raise HTTPException(
+                        status_code=500,
+                        detail=(
+                            "Failed to create syllabus unit"
+                        ),
+                    )
+
+                unit_id = unit_row.id
+
+                imported_units += 1
+
+                unit_topic_count = 0
+
+                for topic_name in unit.get(
+                    "topics",
+                    []
+                ):
+
+                    topic_name = topic_name.strip()
+
+                    if not topic_name:
+                        continue
+
+                    connection.execute(
+                        text("""
+                            INSERT INTO syllabus_topics (
+                                unit_id,
+                                topic_name,
+                                status,
+                                mastery
+                            )
+                            VALUES (
+                                :unit_id,
+                                :topic_name,
+                                'Not Started',
+                                0
+                            )
+                        """),
+                        {
+                            "unit_id": unit_id,
+                            "topic_name": topic_name,
+                        },
+                    )
+
+                    imported_topics += 1
+                    unit_topic_count += 1
+
+                unit_summaries.append(
+                    {
+                        "unit_number": unit[
+                            "unit_number"
+                        ],
+                        "unit_name": unit[
+                            "unit_name"
+                        ],
+                        "hours": unit.get(
+                            "hours",
+                            0
+                        ),
+                        "topics_imported": unit_topic_count,
+                    }
+                )
+
+    except HTTPException:
+        raise
+
+    except Exception as error:
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Syllabus import failed: "
+                f"{str(error)}"
+            ),
+        )
+
+    # --------------------------------------------------------
+    # Return import summary
+    # --------------------------------------------------------
+
+    return {
+        "message": "Syllabus imported successfully",
+        "subject": {
+            "id": subject_data["id"],
+            "name": subject_data["name"],
+            "short_name": subject_data[
+                "short_name"
+            ],
+        },
+        "course": {
+            "course_code": selected_course[
+                "course_code"
+            ],
+            "course_name": selected_course[
+                "course_name"
+            ],
+        },
+        "source_file": file.filename,
+        "pdf_pages": len(reader.pages),
+        "courses_detected": parsed.get(
+            "course_count",
+            0
+        ),
+        "units_imported": imported_units,
+        "topics_imported": imported_topics,
+        "units": unit_summaries,
+    }
 
 
 # ============================================================

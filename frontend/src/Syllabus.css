@@ -27,17 +27,14 @@
   width: 52px;
   height: 52px;
   border-radius: 15px;
-
   display: flex;
   align-items: center;
   justify-content: center;
-
   background: linear-gradient(
     135deg,
     rgba(35, 88, 165, 0.14),
     rgba(116, 34, 61, 0.12)
   );
-
   color: #244f91;
 }
 
@@ -58,20 +55,15 @@
 .syllabus-refresh-button {
   border: 1px solid #ddd7d1;
   background: #ffffff;
-
   display: inline-flex;
   align-items: center;
   gap: 8px;
-
   padding: 10px 15px;
   border-radius: 11px;
-
   color: #373330;
   font-size: 13px;
   font-weight: 650;
-
   cursor: pointer;
-
   transition:
     transform 0.2s ease,
     box-shadow 0.2s ease,
@@ -81,8 +73,12 @@
 .syllabus-refresh-button:hover {
   transform: translateY(-1px);
   border-color: #b9b0a9;
-
   box-shadow: 0 7px 20px rgba(40, 31, 26, 0.08);
+}
+
+.syllabus-refresh-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
 }
 
 .spin-icon {
@@ -103,16 +99,12 @@
   display: flex;
   align-items: center;
   gap: 10px;
-
   padding: 13px 15px;
   margin-bottom: 22px;
-
   border: 1px solid rgba(145, 50, 66, 0.2);
   border-radius: 12px;
-
   background: rgba(145, 50, 66, 0.06);
   color: #7e2f40;
-
   font-size: 13px;
   font-weight: 600;
 }
@@ -133,9 +125,7 @@
 
 .section-eyebrow {
   display: block;
-
   margin-bottom: 6px;
-
   color: #8c8179;
   font-size: 10px;
   font-weight: 800;
@@ -145,7 +135,6 @@
 .section-heading h2,
 .units-heading h2 {
   margin: 0;
-
   font-size: 20px;
   line-height: 1.25;
   font-weight: 730;
@@ -159,7 +148,6 @@
 .subject-selector {
   display: flex;
   gap: 12px;
-
   overflow-x: auto;
   padding: 3px 2px 8px;
 }
@@ -175,21 +163,15 @@
 
 .subject-chip {
   flex: 0 0 auto;
-
   display: flex;
   align-items: center;
   gap: 10px;
-
   padding: 9px 13px;
-
   border: 1px solid #dfd9d3;
   border-radius: 12px;
-
   background: #ffffff;
   color: #413c38;
-
   cursor: pointer;
-
   transition:
     border-color 0.2s ease,
     transform 0.2s ease,
@@ -213,15 +195,11 @@
 .subject-chip-short {
   min-width: 35px;
   height: 30px;
-
   display: flex;
   align-items: center;
   justify-content: center;
-
   border-radius: 8px;
-
   background: rgba(35, 88, 165, 0.1);
-
   font-size: 11px;
   font-weight: 800;
 }
@@ -242,20 +220,15 @@
 
 .syllabus-overview {
   display: grid;
-
-  grid-template-columns: minmax(240px, 1.7fr) repeat(4, minmax(90px, 0.55fr));
-
+  grid-template-columns:
+    minmax(240px, 1.7fr)
+    repeat(4, minmax(90px, 0.55fr));
   gap: 1px;
-
   overflow: hidden;
-
   border: 1px solid #ded8d2;
   border-radius: 16px;
-
   background: #ded8d2;
-
   box-shadow: 0 7px 25px rgba(45, 35, 28, 0.04);
-
   margin-bottom: 18px;
 }
 
@@ -270,9 +243,7 @@
 
 .overview-label {
   display: block;
-
   margin-bottom: 7px;
-
   color: #91867e;
   font-size: 10px;
   font-weight: 800;
@@ -281,18 +252,14 @@
 
 .syllabus-overview-main h2 {
   margin: 0;
-
   color: #252220;
-
   font-size: 20px;
   font-weight: 730;
 }
 
 .syllabus-overview-main p {
   margin: 5px 0 0;
-
   color: #817a75;
-
   font-size: 12px;
   font-weight: 600;
 }
@@ -301,22 +268,18 @@
   display: flex;
   flex-direction: column;
   justify-content: center;
-
   padding: 18px;
 }
 
 .syllabus-stat span {
   color: #8c847d;
-
   font-size: 11px;
   font-weight: 650;
 }
 
 .syllabus-stat strong {
   margin-top: 6px;
-
   color: #2b2927;
-
   font-size: 23px;
   font-weight: 750;
 }
@@ -327,14 +290,10 @@
 
 .syllabus-progress-card {
   padding: 21px 22px;
-
   border: 1px solid #ded8d2;
   border-radius: 16px;
-
   background: #ffffff;
-
   margin-bottom: 28px;
-
   box-shadow: 0 7px 25px rgba(45, 35, 28, 0.04);
 }
 
@@ -347,9 +306,7 @@
 
 .progress-card-label {
   display: block;
-
   margin-bottom: 5px;
-
   color: #91867e;
   font-size: 10px;
   font-weight: 800;
@@ -358,16 +315,13 @@
 
 .progress-card-top h3 {
   margin: 0;
-
   color: #292624;
-
   font-size: 15px;
   font-weight: 680;
 }
 
 .progress-card-top strong {
   color: #7a2943;
-
   font-size: 24px;
   font-weight: 800;
 }
@@ -375,40 +329,29 @@
 .syllabus-progress-track {
   width: 100%;
   height: 9px;
-
   margin-top: 17px;
-
   overflow: hidden;
-
   border-radius: 999px;
-
   background: #eeeae6;
 }
 
 .syllabus-progress-fill {
   height: 100%;
-
   border-radius: inherit;
-
   background: linear-gradient(
     90deg,
     #315d9d,
     #7a2943
   );
-
   transition: width 0.5s ease;
 }
 
 .progress-breakdown {
   display: flex;
   flex-wrap: wrap;
-
   gap: 18px;
-
   margin-top: 12px;
-
   color: #807973;
-
   font-size: 11px;
   font-weight: 600;
 }
@@ -435,14 +378,10 @@
 
 .unit-card {
   overflow: hidden;
-
   border: 1px solid #ded8d2;
   border-radius: 15px;
-
   background: #ffffff;
-
   box-shadow: 0 5px 18px rgba(45, 35, 28, 0.035);
-
   transition:
     border-color 0.2s ease,
     box-shadow 0.2s ease;
@@ -455,18 +394,13 @@
 
 .unit-header {
   width: 100%;
-
   display: flex;
   align-items: center;
   justify-content: space-between;
-
   padding: 18px 19px;
-
   border: none;
   background: transparent;
-
   text-align: left;
-
   cursor: pointer;
 }
 
@@ -479,29 +413,21 @@
 .unit-number {
   width: 42px;
   height: 42px;
-
   flex-shrink: 0;
-
   display: flex;
   align-items: center;
   justify-content: center;
-
   border-radius: 12px;
-
   background: #f0f3f8;
   color: #294e83;
-
   font-size: 15px;
   font-weight: 800;
 }
 
 .unit-label {
   display: block;
-
   margin-bottom: 3px;
-
   color: #978c84;
-
   font-size: 9px;
   font-weight: 800;
   letter-spacing: 1px;
@@ -509,20 +435,15 @@
 
 .unit-header h3 {
   margin: 0;
-
   color: #2a2725;
-
   font-size: 15px;
   font-weight: 700;
 }
 
 .unit-topic-count {
   display: block;
-
   margin-top: 4px;
-
   color: #918984;
-
   font-size: 11px;
 }
 
@@ -530,7 +451,6 @@
   display: flex;
   align-items: center;
   justify-content: center;
-
   color: #807770;
 }
 
@@ -540,7 +460,6 @@
 
 .topics-container {
   border-top: 1px solid #ece7e2;
-
   padding: 5px 19px 14px;
 }
 
@@ -548,11 +467,8 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-
   gap: 25px;
-
   padding: 14px 0;
-
   border-bottom: 1px solid #f0ece8;
 }
 
@@ -562,23 +478,9 @@
 
 .topic-main {
   min-width: 0;
-
   display: flex;
   align-items: center;
   gap: 12px;
-}
-
-.topic-status-icon {
-  width: 31px;
-  height: 31px;
-
-  flex-shrink: 0;
-
-  display: flex;
-  align-items: center;
-  justify-content: center;
-
-  border-radius: 50%;
 }
 
 .topic-info {
@@ -587,59 +489,101 @@
 
 .topic-info h4 {
   margin: 0;
-
   color: #35312e;
-
   font-size: 13px;
   font-weight: 650;
 }
 
-.topic-status {
-  display: inline-block;
+/* ============================================================
+   STATUS BUTTON
+   ============================================================ */
 
-  margin-top: 4px;
+.topic-status-button {
+  width: 31px;
+  height: 31px;
+  flex-shrink: 0;
 
-  font-size: 10px;
-  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  padding: 0;
+
+  border: 1px solid transparent;
+  border-radius: 50%;
+
+  cursor: pointer;
+
+  transition:
+    transform 0.2s ease,
+    box-shadow 0.2s ease,
+    background 0.2s ease;
 }
 
-.status-completed {
+.topic-status-button:hover {
+  transform: scale(1.08);
+}
+
+.topic-status-button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+  transform: none;
+}
+
+.topic-status-button.status-completed {
   color: #397052;
-  background-color: rgba(57, 112, 82, 0.08);
-}
-
-.topic-status-icon.status-completed {
   background: rgba(57, 112, 82, 0.1);
 }
 
-.topic-status.status-completed {
-  background: transparent;
-}
-
-.status-progress {
+.topic-status-button.status-progress {
   color: #8a5a28;
-  background-color: rgba(138, 90, 40, 0.08);
-}
-
-.topic-status-icon.status-progress {
   background: rgba(138, 90, 40, 0.1);
 }
 
-.topic-status.status-progress {
-  background: transparent;
-}
-
-.status-not-started {
+.topic-status-button.status-not-started {
   color: #807973;
-  background-color: rgba(128, 121, 115, 0.08);
-}
-
-.topic-status-icon.status-not-started {
   background: rgba(128, 121, 115, 0.08);
 }
 
-.topic-status.status-not-started {
+/* ============================================================
+   STATUS TEXT BUTTON
+   ============================================================ */
+
+.topic-status-button-text {
+  display: inline-flex;
+  align-items: center;
+
+  margin-top: 5px;
+  padding: 0;
+
+  border: none;
   background: transparent;
+
+  font-size: 10px;
+  font-weight: 700;
+
+  cursor: pointer;
+}
+
+.topic-status-button-text:hover {
+  text-decoration: underline;
+}
+
+.topic-status-button-text:disabled {
+  cursor: wait;
+  text-decoration: none;
+}
+
+.topic-status-button-text.status-completed {
+  color: #397052;
+}
+
+.topic-status-button-text.status-progress {
+  color: #8a5a28;
+}
+
+.topic-status-button-text.status-not-started {
+  color: #807973;
 }
 
 /* ============================================================
@@ -655,20 +599,17 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-
   margin-bottom: 6px;
 }
 
 .mastery-top span {
   color: #958b84;
-
   font-size: 10px;
   font-weight: 650;
 }
 
 .mastery-top strong {
   color: #3d3936;
-
   font-size: 11px;
   font-weight: 750;
 }
@@ -676,17 +617,13 @@
 .mastery-track {
   width: 100%;
   height: 6px;
-
   overflow: hidden;
-
   border-radius: 999px;
-
   background: #eeeae7;
 }
 
 .mastery-fill {
   height: 100%;
-
   border-radius: inherit;
 
   background: linear-gradient(
@@ -695,11 +632,13 @@
     #7a2943
   );
 
-  transition: width 0.4s ease;
+  transition:
+    width 0.55s ease,
+    opacity 0.3s ease;
 }
 
 /* ============================================================
-   EMPTY / LOADING
+   LOADING / EMPTY
    ============================================================ */
 
 .syllabus-loading,
@@ -719,7 +658,6 @@
   background: rgba(255, 255, 255, 0.65);
 
   color: #817a74;
-
   text-align: center;
 }
 
@@ -730,23 +668,18 @@
 
 .syllabus-empty h3 {
   margin: 0;
-
   color: #35312e;
-
   font-size: 15px;
 }
 
 .syllabus-empty p {
   margin: 6px 0 0;
-
   font-size: 12px;
 }
 
 .no-topics {
   padding: 15px 0;
-
   color: #8b837c;
-
   font-size: 12px;
   font-style: italic;
 }
@@ -757,7 +690,9 @@
 
 @media (max-width: 1050px) {
   .syllabus-overview {
-    grid-template-columns: minmax(220px, 1.5fr) repeat(2, 1fr);
+    grid-template-columns:
+      minmax(220px, 1.5fr)
+      repeat(2, 1fr);
   }
 
   .syllabus-stat {
@@ -787,12 +722,8 @@
     padding: 9px;
   }
 
-  .syllabus-refresh-button {
-    font-size: 0;
-  }
-
-  .syllabus-refresh-button svg {
-    margin: 0;
+  .syllabus-refresh-button span {
+    display: none;
   }
 
   .syllabus-overview {
