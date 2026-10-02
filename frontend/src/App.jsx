@@ -21,6 +21,7 @@ import {
 
 import Subjects from "./Subjects.jsx";
 import SubjectDetails from "./SubjectDetails.jsx";
+import Syllabus from "./Syllabus.jsx";
 import Tasks from "./Tasks.jsx";
 import StudyPlanner from "./StudyPlanner.jsx";
 import AIAssistant from "./AIAssistant.jsx";
@@ -40,6 +41,12 @@ function Sidebar() {
     {
       path: "/subjects",
       label: "Subjects",
+      icon: BookOpen,
+    },
+
+    {
+      path: "/syllabus",
+      label: "Syllabus",
       icon: BookOpen,
     },
 
@@ -416,6 +423,11 @@ function App() {
           <Route
             path="/subjects/:subjectId"
             element={<SubjectDetails />}
+          />
+
+          <Route
+            path="/syllabus"
+            element={<Syllabus />}
           />
 
           <Route
