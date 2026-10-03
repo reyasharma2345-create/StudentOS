@@ -38,10 +38,11 @@ function StudyPlanner() {
       setLoading(true);
       setError("");
 
-      const [sessionsResponse, subjectsResponse] = await Promise.all([
-        fetch(`${API_URL}/study-sessions`),
-        fetch(`${API_URL}/subjects`),
-      ]);
+      const [sessionsResponse, subjectsResponse] =
+        await Promise.all([
+          fetch(`${API_URL}/study-sessions`),
+          fetch(`${API_URL}/subjects`),
+        ]);
 
       if (!sessionsResponse.ok) {
         throw new Error(
@@ -61,8 +62,29 @@ function StudyPlanner() {
       console.log("Loaded study sessions:", sessionsData);
       console.log("Loaded subjects:", subjectsData);
 
-      setSessions(sessionsData.study_sessions || []);
-      setSubjects(subjectsData.subjects || []);
+      // ---------------------------------------------------------
+      // SUPPORT BOTH:
+      // 1. Direct arrays
+      // 2. Objects containing value / study_sessions / subjects
+      // ---------------------------------------------------------
+
+      const loadedSessions = Array.isArray(sessionsData)
+        ? sessionsData
+        : sessionsData?.value ||
+          sessionsData?.study_sessions ||
+          [];
+
+      const loadedSubjects = Array.isArray(subjectsData)
+        ? subjectsData
+        : subjectsData?.value ||
+          subjectsData?.subjects ||
+          [];
+
+      console.log("Parsed sessions:", loadedSessions);
+      console.log("Parsed subjects:", loadedSubjects);
+
+      setSessions(loadedSessions);
+      setSubjects(loadedSubjects);
     } catch (err) {
       console.error("Load error:", err);
 
@@ -116,12 +138,7 @@ function StudyPlanner() {
   const handleCreateSession = async (event) => {
     event.preventDefault();
 
-    // Clear old error
     setError("");
-
-    // -------------------------
-    // VALIDATION
-    // -------------------------
 
     if (!formData.subject_id) {
       setError("Please select a subject.");
@@ -149,17 +166,9 @@ function StudyPlanner() {
       return;
     }
 
-    // -------------------------
-    // CALCULATE DURATION
-    // -------------------------
-
     const durationMinutes = Math.round(
       (end.getTime() - start.getTime()) / 60000
     );
-
-    // -------------------------
-    // KEEP LOCAL TIME
-    // -------------------------
 
     const localStartTime =
       formData.start_time.length === 16
@@ -170,10 +179,6 @@ function StudyPlanner() {
       formData.end_time.length === 16
         ? `${formData.end_time}:00`
         : formData.end_time;
-
-    // -------------------------
-    // REQUEST PAYLOAD
-    // -------------------------
 
     const payload = {
       subject_id: Number(formData.subject_id),
@@ -192,32 +197,21 @@ function StudyPlanner() {
     try {
       setSaving(true);
 
-      // -------------------------
-      // SEND TO FASTAPI
-      // -------------------------
-
       const response = await fetch(
         `${API_URL}/study-sessions`,
         {
           method: "POST",
-
           headers: {
             "Content-Type": "application/json",
           },
-
           body: JSON.stringify(payload),
         }
       );
 
-      // Read raw response first
       const responseText = await response.text();
 
       console.log("Backend status:", response.status);
       console.log("Backend response:", responseText);
-
-      // -------------------------
-      // PARSE RESPONSE
-      // -------------------------
 
       let data;
 
@@ -229,10 +223,6 @@ function StudyPlanner() {
         );
       }
 
-      // -------------------------
-      // HANDLE BACKEND ERROR
-      // -------------------------
-
       if (!response.ok) {
         throw new Error(
           data.detail ||
@@ -240,33 +230,23 @@ function StudyPlanner() {
         );
       }
 
-      console.log("Study session created successfully:", data);
-
-      // -------------------------
-      // RELOAD FROM DATABASE
-      // -------------------------
+      console.log(
+        "Study session created successfully:",
+        data
+      );
 
       await loadData();
-
-      // -------------------------
-      // CLOSE MODAL
-      // -------------------------
 
       setShowModal(false);
       resetForm();
 
-      console.log("Study session saved and reloaded successfully.");
-
+      console.log(
+        "Study session saved and reloaded successfully."
+      );
     } catch (err) {
-      console.error(
-        "================================="
-      );
-
+      console.error("=================================");
       console.error("STUDY SESSION SAVE ERROR:", err);
-
-      console.error(
-        "================================="
-      );
+      console.error("=================================");
 
       setError(
         err.message ||
@@ -319,14 +299,13 @@ function StudyPlanner() {
 
       console.log("Deleted study session:", data);
 
-      // Reload directly from backend
       await loadData();
-
     } catch (err) {
       console.error("Delete error:", err);
 
       setError(
-        err.message || "Failed to delete study session."
+        err.message ||
+          "Failed to delete study session."
       );
     }
   };
@@ -338,7 +317,8 @@ function StudyPlanner() {
   const totalMinutes = useMemo(() => {
     return sessions.reduce(
       (total, session) =>
-        total + Number(session.duration_minutes || 0),
+        total +
+        Number(session.duration_minutes || 0),
       0
     );
   }, [sessions]);
@@ -426,7 +406,6 @@ function StudyPlanner() {
             disabled={loading}
           >
             <RefreshCw size={16} />
-
             Refresh
           </button>
 
@@ -438,7 +417,6 @@ function StudyPlanner() {
             }}
           >
             <Plus size={16} />
-
             Add Study Session
           </button>
 
@@ -462,8 +440,6 @@ function StudyPlanner() {
 
       <div className="planner-summary-grid">
 
-        {/* TOTAL STUDY TIME */}
-
         <div className="planner-summary-card">
 
           <div className="planner-summary-icon">
@@ -471,7 +447,6 @@ function StudyPlanner() {
           </div>
 
           <div>
-
             <span>
               Total Study Time
             </span>
@@ -479,12 +454,9 @@ function StudyPlanner() {
             <strong>
               {totalHours}h {remainingMinutes}m
             </strong>
-
           </div>
 
         </div>
-
-        {/* STUDY SESSIONS */}
 
         <div className="planner-summary-card">
 
@@ -493,7 +465,6 @@ function StudyPlanner() {
           </div>
 
           <div>
-
             <span>
               Study Sessions
             </span>
@@ -501,12 +472,9 @@ function StudyPlanner() {
             <strong>
               {sessions.length}
             </strong>
-
           </div>
 
         </div>
-
-        {/* SUBJECTS STUDIED */}
 
         <div className="planner-summary-card">
 
@@ -515,7 +483,6 @@ function StudyPlanner() {
           </div>
 
           <div>
-
             <span>
               Subjects Studied
             </span>
@@ -530,7 +497,6 @@ function StudyPlanner() {
                 ).size
               }
             </strong>
-
           </div>
 
         </div>
@@ -543,12 +509,9 @@ function StudyPlanner() {
 
       <div className="planner-section">
 
-        {/* SECTION HEADER */}
-
         <div className="planner-section-header">
 
           <div>
-
             <span className="card-label">
               ACTIVITY
             </span>
@@ -556,14 +519,9 @@ function StudyPlanner() {
             <h2>
               Study Sessions
             </h2>
-
           </div>
 
         </div>
-
-        {/* =================================================
-            LOADING
-            ================================================= */}
 
         {loading ? (
 
@@ -582,18 +540,10 @@ function StudyPlanner() {
 
         ) : sessions.length === 0 ? (
 
-          /* =================================================
-             EMPTY STATE
-             ================================================= */
-
           <div className="planner-empty-state">
 
             <div className="planner-empty-icon">
-
-              <CalendarDays
-                size={28}
-              />
-
+              <CalendarDays size={28} />
             </div>
 
             <h3>
@@ -609,10 +559,6 @@ function StudyPlanner() {
 
         ) : (
 
-          /* =================================================
-             SESSION LIST
-             ================================================= */
-
           <div className="planner-session-list">
 
             {sessions.map((session) => (
@@ -625,11 +571,7 @@ function StudyPlanner() {
                 <div className="planner-session-main">
 
                   <div className="planner-session-icon">
-
-                    <BookOpen
-                      size={19}
-                    />
-
+                    <BookOpen size={19} />
                   </div>
 
                   <div className="planner-session-info">
@@ -659,9 +601,7 @@ function StudyPlanner() {
 
                       <span>
 
-                        <CalendarDays
-                          size={14}
-                        />
+                        <CalendarDays size={14} />
 
                         {formatDate(
                           session.start_time
@@ -671,9 +611,7 @@ function StudyPlanner() {
 
                       <span>
 
-                        <Clock3
-                          size={14}
-                        />
+                        <Clock3 size={14} />
 
                         {formatTime(
                           session.start_time
@@ -696,9 +634,7 @@ function StudyPlanner() {
                     {session.notes && (
 
                       <div className="planner-session-notes">
-
                         {session.notes}
-
                       </div>
 
                     )}
@@ -806,18 +742,16 @@ function StudyPlanner() {
                     Select a subject
                   </option>
 
-                  {subjects.map(
-                    (subject) => (
+                  {subjects.map((subject) => (
 
-                      <option
-                        key={subject.id}
-                        value={subject.id}
-                      >
-                        {subject.name}
-                      </option>
+                    <option
+                      key={subject.id}
+                      value={subject.id}
+                    >
+                      {subject.name}
+                    </option>
 
-                    )
-                  )}
+                  ))}
 
                 </select>
 
