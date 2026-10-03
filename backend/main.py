@@ -119,6 +119,73 @@ class SyllabusTopicUpdate(BaseModel):
 
 
 # ============================================================
+# PROGRESS HELPER
+# ============================================================
+
+def calculate_subject_progress(
+    connection,
+    subject_id: int,
+):
+    """
+    Calculate subject progress from the actual syllabus.
+
+    Progress is based on the percentage of syllabus topics
+    whose status is 'Completed'.
+
+    Example:
+        20 completed topics
+        41 total topics
+
+        Progress = 20 / 41 * 100
+    """
+
+    result = connection.execute(
+        text("""
+            SELECT
+                COUNT(st.id) AS total_topics,
+                COUNT(
+                    CASE
+                        WHEN st.status = 'Completed'
+                        THEN 1
+                    END
+                ) AS completed_topics
+            FROM syllabus_units su
+            LEFT JOIN syllabus_topics st
+                ON su.id = st.unit_id
+            WHERE su.subject_id = :subject_id
+        """),
+        {
+            "subject_id": subject_id,
+        },
+    )
+
+    row = result.fetchone()
+
+    if not row:
+        return {
+            "progress": 0,
+            "total_topics": 0,
+            "completed_topics": 0,
+        }
+
+    total_topics = row.total_topics or 0
+    completed_topics = row.completed_topics or 0
+
+    if total_topics == 0:
+        progress = 0
+    else:
+        progress = round(
+            (completed_topics / total_topics) * 100
+        )
+
+    return {
+        "progress": progress,
+        "total_topics": total_topics,
+        "completed_topics": completed_topics,
+    }
+
+
+# ============================================================
 # ROOT
 # ============================================================
 
@@ -142,22 +209,86 @@ def get_subjects():
         result = connection.execute(
             text("""
                 SELECT
-                    id,
-                    name,
-                    short_name,
-                    progress,
-                    topics,
-                    assignments,
-                    color
-                FROM subjects
-                ORDER BY id
+                    s.id,
+                    s.name,
+                    s.short_name,
+                    s.progress AS stored_progress,
+                    s.topics AS stored_topics,
+                    s.assignments,
+                    s.color,
+
+                    COUNT(st.id) AS syllabus_topics,
+
+                    COUNT(
+                        CASE
+                            WHEN st.status = 'Completed'
+                            THEN 1
+                        END
+                    ) AS completed_topics
+
+                FROM subjects s
+
+                LEFT JOIN syllabus_units su
+                    ON s.id = su.subject_id
+
+                LEFT JOIN syllabus_topics st
+                    ON su.id = st.unit_id
+
+                GROUP BY
+                    s.id,
+                    s.name,
+                    s.short_name,
+                    s.progress,
+                    s.topics,
+                    s.assignments,
+                    s.color
+
+                ORDER BY s.id
             """)
         )
 
         subjects = []
 
         for row in result:
-            subjects.append(dict(row._mapping))
+
+            data = dict(row._mapping)
+
+            total_topics = data["syllabus_topics"] or 0
+            completed_topics = data["completed_topics"] or 0
+
+            if total_topics > 0:
+                calculated_progress = round(
+                    (completed_topics / total_topics) * 100
+                )
+            else:
+                calculated_progress = 0
+
+            subjects.append(
+                {
+                    "id": data["id"],
+                    "name": data["name"],
+                    "short_name": data["short_name"],
+
+                    # Automatically calculated from syllabus.
+                    "progress": calculated_progress,
+
+                    # Use actual syllabus topic count
+                    # when syllabus data exists.
+                    "topics": (
+                        total_topics
+                        if total_topics > 0
+                        else data["stored_topics"]
+                    ),
+
+                    "assignments": data["assignments"],
+                    "color": data["color"],
+
+                    # Extra information useful for
+                    # future analytics.
+                    "completed_topics": completed_topics,
+                    "syllabus_topics": total_topics,
+                }
+            )
 
         return subjects
 
@@ -170,15 +301,41 @@ def get_subject(subject_id: int):
         result = connection.execute(
             text("""
                 SELECT
-                    id,
-                    name,
-                    short_name,
-                    progress,
-                    topics,
-                    assignments,
-                    color
-                FROM subjects
-                WHERE id = :subject_id
+                    s.id,
+                    s.name,
+                    s.short_name,
+                    s.progress AS stored_progress,
+                    s.topics AS stored_topics,
+                    s.assignments,
+                    s.color,
+
+                    COUNT(st.id) AS syllabus_topics,
+
+                    COUNT(
+                        CASE
+                            WHEN st.status = 'Completed'
+                            THEN 1
+                        END
+                    ) AS completed_topics
+
+                FROM subjects s
+
+                LEFT JOIN syllabus_units su
+                    ON s.id = su.subject_id
+
+                LEFT JOIN syllabus_topics st
+                    ON su.id = st.unit_id
+
+                WHERE s.id = :subject_id
+
+                GROUP BY
+                    s.id,
+                    s.name,
+                    s.short_name,
+                    s.progress,
+                    s.topics,
+                    s.assignments,
+                    s.color
             """),
             {
                 "subject_id": subject_id
@@ -193,7 +350,33 @@ def get_subject(subject_id: int):
                 detail="Subject not found"
             )
 
-        return dict(row._mapping)
+        data = dict(row._mapping)
+
+        total_topics = data["syllabus_topics"] or 0
+        completed_topics = data["completed_topics"] or 0
+
+        if total_topics > 0:
+            calculated_progress = round(
+                (completed_topics / total_topics) * 100
+            )
+        else:
+            calculated_progress = 0
+
+        return {
+            "id": data["id"],
+            "name": data["name"],
+            "short_name": data["short_name"],
+            "progress": calculated_progress,
+            "topics": (
+                total_topics
+                if total_topics > 0
+                else data["stored_topics"]
+            ),
+            "assignments": data["assignments"],
+            "color": data["color"],
+            "completed_topics": completed_topics,
+            "syllabus_topics": total_topics,
+        }
 
 
 @app.post("/subjects")
