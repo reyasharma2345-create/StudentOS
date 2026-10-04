@@ -1290,13 +1290,11 @@ async def research(
         100
     )
 
-    # IMPORTANT:
-    # Use OpenAlex's current `search` parameter
-    # rather than the older `q` parameter.
+    # Keep the tested OpenAlex query format.
     params = {
-    "q": query,
-    "per_page": candidate_limit
-   }
+        "q": query,
+        "per_page": candidate_limit
+    }
 
     headers = {
         "User-Agent": "StudentOS/1.0"
@@ -1462,6 +1460,257 @@ async def research(
             0
         ),
         "results": results
+    }
+
+
+# ============================================================
+# AI ASSISTANT — INTENT LAYER
+# ============================================================
+
+class AIIntentRequest(BaseModel):
+    message: str
+
+
+def normalize_intent_text(value):
+
+    if not value:
+        return ""
+
+    value = value.lower().strip()
+
+    value = re.sub(
+        r"\s+",
+        " ",
+        value
+    )
+
+    return value
+
+
+def detect_ai_intent(message):
+
+    message = normalize_intent_text(
+        message
+    )
+
+    if not message:
+
+        return {
+            "intent": "LEARN",
+            "confidence": 0,
+            "reason": "Empty message"
+        }
+
+    # ========================================================
+    # RESEARCH SIGNALS
+    # ========================================================
+
+    research_phrases = [
+        "research paper",
+        "research papers",
+        "research article",
+        "research articles",
+        "academic paper",
+        "academic papers",
+        "scholarly paper",
+        "scholarly papers",
+        "journal paper",
+        "journal papers",
+        "latest research",
+        "recent research",
+        "research on",
+        "papers on",
+        "papers about",
+        "paper on",
+        "paper about",
+        "find papers",
+        "find research",
+        "literature review",
+        "related papers",
+        "related research"
+    ]
+
+    research_words = [
+        "research",
+        "papers",
+        "paper",
+        "literature",
+        "scholarly",
+        "academic"
+    ]
+
+    # ========================================================
+    # LEARNING SIGNALS
+    # ========================================================
+
+    learning_phrases = [
+        "what is",
+        "what are",
+        "explain",
+        "teach me",
+        "help me understand",
+        "how does",
+        "how do",
+        "why does",
+        "why do",
+        "meaning of",
+        "define",
+        "definition of",
+        "simplify",
+        "in simple words",
+        "easy explanation",
+        "example of",
+        "examples of",
+        "difference between",
+        "compare",
+        "how to learn",
+        "i don't understand",
+        "i dont understand",
+        "i am confused",
+        "im confused"
+    ]
+
+    learning_words = [
+        "explain",
+        "teach",
+        "understand",
+        "meaning",
+        "define",
+        "definition",
+        "example",
+        "examples",
+        "difference",
+        "simplify",
+        "learn"
+    ]
+
+    # ========================================================
+    # DETECT SIGNALS
+    # ========================================================
+
+    has_research_phrase = any(
+        phrase in message
+        for phrase in research_phrases
+    )
+
+    has_research_word = any(
+        re.search(
+            rf"\b{re.escape(word)}\b",
+            message
+        )
+        for word in research_words
+    )
+
+    has_learning_phrase = any(
+        phrase in message
+        for phrase in learning_phrases
+    )
+
+    has_learning_word = any(
+        re.search(
+            rf"\b{re.escape(word)}\b",
+            message
+        )
+        for word in learning_words
+    )
+
+    has_research_signal = (
+        has_research_phrase
+        or has_research_word
+    )
+
+    has_learning_signal = (
+        has_learning_phrase
+        or has_learning_word
+    )
+
+    # ========================================================
+    # BOTH
+    # ========================================================
+
+    if (
+        has_research_signal
+        and has_learning_signal
+    ):
+
+        return {
+            "intent": "BOTH",
+            "confidence": 0.95,
+            "reason": (
+                "The message contains both learning "
+                "and research signals."
+            )
+        }
+
+    # ========================================================
+    # RESEARCH
+    # ========================================================
+
+    if has_research_signal:
+
+        return {
+            "intent": "RESEARCH",
+            "confidence": 0.90,
+            "reason": (
+                "The message contains research-oriented "
+                "language."
+            )
+        }
+
+    # ========================================================
+    # LEARN
+    # ========================================================
+
+    if has_learning_signal:
+
+        return {
+            "intent": "LEARN",
+            "confidence": 0.90,
+            "reason": (
+                "The message contains learning-oriented "
+                "language."
+            )
+        }
+
+    # ========================================================
+    # DEFAULT
+    # ========================================================
+
+    return {
+        "intent": "LEARN",
+        "confidence": 0.60,
+        "reason": (
+            "No strong research signal was detected, "
+            "so StudentOS defaults to learning mode."
+        )
+    }
+
+
+# ============================================================
+# AI INTENT API
+# ============================================================
+
+@app.post("/ai/intent")
+def detect_intent(
+    request: AIIntentRequest
+):
+
+    message = request.message.strip()
+
+    if not message:
+
+        raise HTTPException(
+            status_code=400,
+            detail="Message cannot be empty"
+        )
+
+    result = detect_ai_intent(
+        message
+    )
+
+    return {
+        "message": message,
+        **result
     }
 
 
