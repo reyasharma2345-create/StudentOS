@@ -122,6 +122,7 @@ function Subjects() {
 
       setError("");
 
+
       const response = await fetch(
         "http://127.0.0.1:8000/subjects"
       );
@@ -138,7 +139,36 @@ function Subjects() {
 
       const data = await response.json();
 
-      setSubjects(data.subjects);
+
+      /*
+       * The backend may return either:
+       *
+       * {
+       *   subjects: [...]
+       * }
+       *
+       * or directly:
+       *
+       * [...]
+       *
+       * Handle both formats safely.
+       */
+
+      const subjectsData = Array.isArray(data)
+        ? data
+        : data?.subjects;
+
+
+      if (!Array.isArray(subjectsData)) {
+
+        throw new Error(
+          "Invalid subjects response from backend."
+        );
+
+      }
+
+
+      setSubjects(subjectsData);
 
     } catch (error) {
 
@@ -146,6 +176,10 @@ function Subjects() {
         "Error fetching subjects:",
         error
       );
+
+
+      setSubjects([]);
+
 
       setError(
         "Unable to load subjects. Make sure the StudentOS backend is running."
@@ -317,6 +351,7 @@ function Subjects() {
         error
       );
 
+
       setFormError(
         error.message ||
         "Unable to create subject."
@@ -429,11 +464,11 @@ function Subjects() {
             <div>
 
               <span className="card-label">
-                CURRENT SEMESTER
+                ACADEMIC OVERVIEW
               </span>
 
               <h2>
-                Semester 1
+                Your Academic Summary
               </h2>
 
             </div>

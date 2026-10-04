@@ -40,9 +40,6 @@ function SubjectDetails() {
   const [formData, setFormData] = useState({
     name: "",
     short_name: "",
-    progress: 0,
-    topics: 0,
-    assignments: 0,
     color: "blue",
   });
 
@@ -77,16 +74,43 @@ function SubjectDetails() {
       }
 
 
-      setSubject(data.subject);
+      /*
+       * The backend may return:
+       *
+       * {
+       *   subject: {...}
+       * }
+       *
+       * OR directly:
+       *
+       * {
+       *   id: ...,
+       *   name: ...,
+       * }
+       *
+       * Normalize both formats.
+       */
+
+      const subjectData =
+        data?.subject ?? data;
+
+
+      if (!subjectData || !subjectData.id) {
+
+        throw new Error(
+          "Invalid subject data received from backend."
+        );
+
+      }
+
+
+      setSubject(subjectData);
 
 
       setFormData({
-        name: data.subject.name,
-        short_name: data.subject.short_name,
-        progress: data.subject.progress,
-        topics: data.subject.topics,
-        assignments: data.subject.assignments,
-        color: data.subject.color,
+        name: subjectData.name || "",
+        short_name: subjectData.short_name || "",
+        color: subjectData.color || "blue",
       });
 
     } catch (error) {
@@ -95,6 +119,10 @@ function SubjectDetails() {
         "Error fetching subject:",
         error
       );
+
+
+      setSubject(null);
+
 
       setError(
         error.message ||
@@ -162,12 +190,9 @@ function SubjectDetails() {
 
 
     setFormData({
-      name: subject.name,
-      short_name: subject.short_name,
-      progress: subject.progress,
-      topics: subject.topics,
-      assignments: subject.assignments,
-      color: subject.color,
+      name: subject.name || "",
+      short_name: subject.short_name || "",
+      color: subject.color || "blue",
     });
 
 
@@ -225,6 +250,14 @@ function SubjectDetails() {
             "Content-Type": "application/json",
           },
 
+          /*
+           * Progress and topic counts are intentionally
+           * NOT sent here.
+           *
+           * Progress is now calculated automatically
+           * from syllabus topic completion.
+           */
+
           body: JSON.stringify({
             name: formData.name.trim(),
 
@@ -232,15 +265,6 @@ function SubjectDetails() {
               formData.short_name
                 .trim()
                 .toUpperCase(),
-
-            progress:
-              Number(formData.progress),
-
-            topics:
-              Number(formData.topics),
-
-            assignments:
-              Number(formData.assignments),
 
             color: formData.color,
           }),
@@ -261,16 +285,26 @@ function SubjectDetails() {
       }
 
 
-      setSubject(data.subject);
+      const subjectData =
+        data?.subject ?? data;
+
+
+      if (!subjectData || !subjectData.id) {
+
+        throw new Error(
+          "Invalid subject data received from backend."
+        );
+
+      }
+
+
+      setSubject(subjectData);
 
 
       setFormData({
-        name: data.subject.name,
-        short_name: data.subject.short_name,
-        progress: data.subject.progress,
-        topics: data.subject.topics,
-        assignments: data.subject.assignments,
-        color: data.subject.color,
+        name: subjectData.name || "",
+        short_name: subjectData.short_name || "",
+        color: subjectData.color || "blue",
       });
 
 
@@ -282,6 +316,7 @@ function SubjectDetails() {
         "Error updating subject:",
         error
       );
+
 
       setFormError(
         error.message ||
@@ -355,10 +390,12 @@ function SubjectDetails() {
         error
       );
 
+
       setError(
         error.message ||
         "Unable to delete subject."
       );
+
 
       setDeleting(false);
 
@@ -830,58 +867,57 @@ function SubjectDetails() {
 
               <div className="details-form-group">
 
-                <label htmlFor="details-progress">
-                  Progress (%)
+                <label>
+                  Progress
                 </label>
 
-                <input
-                  id="details-progress"
-                  name="progress"
-                  type="number"
-                  min="0"
-                  max="100"
-                  value={formData.progress}
-                  onChange={handleInputChange}
-                  disabled={saving}
-                />
+                <div className="details-readonly-value">
+
+                  {subject.progress}%
+
+                </div>
+
+                <small>
+                  Automatically calculated from syllabus completion.
+                </small>
 
               </div>
 
 
               <div className="details-form-group">
 
-                <label htmlFor="details-topics">
+                <label>
                   Topics
                 </label>
 
-                <input
-                  id="details-topics"
-                  name="topics"
-                  type="number"
-                  min="0"
-                  value={formData.topics}
-                  onChange={handleInputChange}
-                  disabled={saving}
-                />
+                <div className="details-readonly-value">
+
+                  {subject.topics}
+
+                </div>
+
+                <small>
+                  Based on the available syllabus topics.
+                </small>
 
               </div>
 
 
               <div className="details-form-group">
 
-                <label htmlFor="details-assignments">
+                <label>
                   Assignments
                 </label>
 
-                <input
-                  id="details-assignments"
-                  name="assignments"
-                  type="number"
-                  min="0"
-                  value={formData.assignments}
-                  onChange={handleInputChange}
-                  disabled={saving}
-                />
+                <div className="details-readonly-value">
+
+                  {subject.assignments}
+
+                </div>
+
+                <small>
+                  Managed from Tasks and Assignments.
+                </small>
 
               </div>
 
