@@ -727,72 +727,126 @@
 
 
 /* ========================================
-   SEMESTER OVERVIEW
+   ACADEMIC OVERVIEW
    ======================================== */
 
-.semester-overview {
+.academic-overview {
+  width: 100%;
   display: grid;
-
-  grid-template-columns: 1.7fr repeat(3, 1fr);
-
-  gap: 18px;
-
+  grid-template-columns: minmax(240px, 1.6fr) repeat(3, minmax(110px, 1fr));
   align-items: center;
-
-  padding: 22px 24px;
-
-  margin-bottom: 22px;
-
-  border: 1px solid var(--border);
-
-  border-radius: var(--radius-lg);
-
+  gap: 0;
+  margin-bottom: 26px;
+  padding: 24px 28px;
   background: var(--navy);
-
-  color: white;
-
-  box-shadow: var(--shadow-md);
+  border-radius: 18px;
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.12);
 }
 
-.semester-overview h2 {
-  margin-top: 7px;
 
-  color: white;
+/* Left heading section */
 
-  font-size: 21px;
-
-  letter-spacing: -0.5px;
+.academic-overview > div:first-child {
+  padding-right: 28px;
 }
 
-.semester-overview .card-label {
-  color: #aeb8c9;
-}
 
-.semester-stat {
-  padding-left: 20px;
-
-  border-left: 1px solid rgba(255, 255, 255, 0.12);
-}
-
-.semester-stat strong {
+.academic-overview .card-label {
   display: block;
-
-  color: white;
-
-  font-size: 24px;
+  margin-bottom: 7px;
+  color: rgba(255, 255, 255, 0.62);
+  font-size: 0.68rem;
   font-weight: 700;
+  letter-spacing: 0.14em;
 }
 
-.semester-stat span {
+
+.academic-overview h2 {
+  margin: 0;
+  color: #ffffff;
+  font-size: 1.25rem;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+
+/* Individual statistics */
+
+.academic-stat {
+  min-height: 64px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 4px 24px;
+  border-left: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+
+.academic-stat strong {
   display: block;
-
-  margin-top: 3px;
-
-  color: #aeb8c9;
-
-  font-size: 10px;
+  margin-bottom: 5px;
+  color: #ffffff;
+  font-size: 1.65rem;
+  font-weight: 700;
+  line-height: 1;
 }
 
+
+.academic-stat span {
+  color: rgba(255, 255, 255, 0.65);
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+
+/* ========================================
+   ACADEMIC OVERVIEW — RESPONSIVE
+   ======================================== */
+
+@media (max-width: 900px) {
+
+  .academic-overview {
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 20px;
+  }
+
+  .academic-overview > div:first-child {
+    grid-column: 1 / -1;
+    padding-right: 0;
+    padding-bottom: 6px;
+  }
+
+  .academic-stat {
+    padding: 4px 16px;
+  }
+
+  .academic-stat:first-of-type {
+    border-left: none;
+  }
+
+}
+
+
+@media (max-width: 600px) {
+
+  .academic-overview {
+    grid-template-columns: 1fr;
+    gap: 0;
+    padding: 22px;
+  }
+
+  .academic-overview > div:first-child {
+    padding-bottom: 18px;
+  }
+
+  .academic-stat {
+    min-height: auto;
+    padding: 14px 0;
+    border-left: none;
+    border-top: 1px solid rgba(255, 255, 255, 0.14);
+  }
+
+}
 
 /* ========================================
    SUBJECT GRID
@@ -907,8 +961,6 @@
   font-size: 24px;
   font-weight: 700;
 }
-
-
 /* ========================================
    SUBJECT PROGRESS
    ======================================== */
@@ -920,20 +972,15 @@
 .subject-progress-track {
   width: 100%;
   height: 7px;
-
   overflow: hidden;
-
   border-radius: 20px;
-
   background: var(--blue-light);
 }
 
 .subject-progress-fill {
   height: 100%;
-
   border-radius: inherit;
-
-  animation: progressLoad 0.9s ease-out;
+  transition: width 0.6s ease;
 }
 
 .subject-progress-fill.blue {
@@ -943,7 +990,6 @@
 .subject-progress-fill.burgundy {
   background: var(--burgundy);
 }
-
 
 /* ========================================
    SUBJECT META
@@ -1076,11 +1122,11 @@
     grid-template-columns: 1fr;
   }
 
-  .semester-overview {
+  .academic-overview {
     grid-template-columns: 1fr 1fr;
   }
 
-  .semester-stat {
+  .academic-stat {
     padding-left: 0;
 
     border-left: none;
@@ -1202,13 +1248,13 @@
     width: 100%;
   }
 
-  .semester-overview {
+  .academic-overview {
     grid-template-columns: 1fr 1fr;
 
     padding: 20px;
   }
 
-  .semester-overview > div:first-child {
+  .academic-overview > div:first-child {
     grid-column: 1 / -1;
   }
 
@@ -1251,11 +1297,11 @@
     padding: 22px 14px 30px;
   }
 
-  .semester-overview {
+  .academic-overview {
     grid-template-columns: 1fr;
   }
 
-  .semester-overview > div:first-child {
+  .academic-overview > div:first-child {
     grid-column: auto;
   }
 
@@ -6215,4 +6261,60 @@
     justify-content: center;
   }
 
+}
+/* ========================================
+   AI ASSISTANT — COMPACT CHAT AREA
+   ======================================== */
+
+.ai-layout {
+  align-items: flex-start;
+}
+
+.ai-chat-card {
+  height: auto;
+  min-height: 0;
+  align-self: flex-start;
+}
+
+.ai-messages {
+  min-height: 0;
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+/* Keep the chat compact when there are only
+   one or two messages instead of stretching
+   the empty conversation area. */
+
+.ai-chat-card .ai-messages {
+  height: auto;
+}
+
+/* Scrollbar */
+
+.ai-messages::-webkit-scrollbar {
+  width: 5px;
+}
+
+.ai-messages::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.ai-messages::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 10px;
+}
+
+/* Mobile */
+
+@media (max-width: 900px) {
+  .ai-messages {
+    max-height: 320px;
+  }
+}
+
+@media (max-width: 700px) {
+  .ai-messages {
+    max-height: 280px;
+  }
 }

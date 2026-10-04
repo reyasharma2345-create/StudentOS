@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import "./SubjectModal.css";
+
 import {
   BookOpen,
   Plus,
@@ -10,15 +11,36 @@ import {
 import { useNavigate } from "react-router-dom";
 
 
-function SubjectCard({ subject }) {
+function SubjectCard({ subject, index }) {
 
   const navigate = useNavigate();
 
+  const progress = Math.min(
+    100,
+    Math.max(
+      0,
+      Number(subject?.progress) || 0
+    )
+  );
+
+  // StudentOS automatically chooses the accent color.
+  // Users do not need to choose one manually.
+  const subjectColor =
+    index % 2 === 0
+      ? "blue"
+      : "burgundy";
+
+
   return (
+
     <article className="subject-card">
 
-      <div className={`subject-icon ${subject.color}`}>
+      <div
+        className={`subject-icon ${subjectColor}`}
+      >
+
         <BookOpen size={19} />
+
       </div>
 
 
@@ -26,9 +48,13 @@ function SubjectCard({ subject }) {
 
         <div>
 
-          <span className="subject-code">
-            {subject.short_name}
-          </span>
+          {subject.short_name && (
+
+            <span className="subject-code">
+              {subject.short_name}
+            </span>
+
+          )}
 
           <h3>
             {subject.name}
@@ -38,7 +64,7 @@ function SubjectCard({ subject }) {
 
 
         <span className="subject-percentage">
-          {subject.progress}%
+          {progress}%
         </span>
 
       </div>
@@ -49,9 +75,9 @@ function SubjectCard({ subject }) {
         <div className="subject-progress-track">
 
           <div
-            className={`subject-progress-fill ${subject.color}`}
+            className={`subject-progress-fill ${subjectColor}`}
             style={{
-              width: `${subject.progress}%`,
+              width: `${progress}%`,
             }}
           />
 
@@ -63,11 +89,22 @@ function SubjectCard({ subject }) {
       <div className="subject-meta">
 
         <span>
-          {subject.topics} topics
+
+          {subject.syllabus_topics ??
+            subject.topics ??
+            0}{" "}
+
+          topics
+
         </span>
 
+
         <span>
-          {subject.assignments} assignments
+
+          {subject.assignments ?? 0}{" "}
+
+          assignments
+
         </span>
 
       </div>
@@ -75,7 +112,9 @@ function SubjectCard({ subject }) {
 
       <button
         className="subject-view-button"
-        onClick={() => navigate(`/subjects/${subject.id}`)}
+        onClick={() =>
+          navigate(`/subjects/${subject.id}`)
+        }
       >
 
         View subject
@@ -85,33 +124,41 @@ function SubjectCard({ subject }) {
       </button>
 
     </article>
+
   );
+
 }
 
 
 function Subjects() {
 
-  const [subjects, setSubjects] = useState([]);
+  const [subjects, setSubjects] =
+    useState([]);
 
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] =
+    useState(true);
 
-  const [error, setError] = useState("");
+  const [error, setError] =
+    useState("");
 
-  const [showModal, setShowModal] = useState(false);
+  const [showModal, setShowModal] =
+    useState(false);
 
-  const [saving, setSaving] = useState(false);
+  const [saving, setSaving] =
+    useState(false);
 
-  const [formError, setFormError] = useState("");
+  const [formError, setFormError] =
+    useState("");
 
 
-  const [formData, setFormData] = useState({
-    name: "",
-    short_name: "",
-    progress: 0,
-    topics: 0,
-    assignments: 0,
-    color: "blue",
-  });
+  const [formData, setFormData] =
+    useState({
+      name: "",
+      short_name: "",
+      progress: 0,
+      topics: 0,
+      assignments: 0,
+    });
 
 
   async function fetchSubjects() {
@@ -137,26 +184,14 @@ function Subjects() {
       }
 
 
-      const data = await response.json();
+      const data =
+        await response.json();
 
 
-      /*
-       * The backend may return either:
-       *
-       * {
-       *   subjects: [...]
-       * }
-       *
-       * or directly:
-       *
-       * [...]
-       *
-       * Handle both formats safely.
-       */
-
-      const subjectsData = Array.isArray(data)
-        ? data
-        : data?.subjects;
+      const subjectsData =
+        Array.isArray(data)
+          ? data
+          : data?.subjects;
 
 
       if (!Array.isArray(subjectsData)) {
@@ -210,8 +245,11 @@ function Subjects() {
 
 
     setFormData((previous) => ({
+
       ...previous,
+
       [name]: value,
+
     }));
 
   }
@@ -220,13 +258,19 @@ function Subjects() {
   function openAddSubjectModal() {
 
     setFormData({
+
       name: "",
+
       short_name: "",
+
       progress: 0,
+
       topics: 0,
+
       assignments: 0,
-      color: "blue",
+
     });
+
 
     setFormError("");
 
@@ -238,8 +282,11 @@ function Subjects() {
   function closeAddSubjectModal() {
 
     if (saving) {
+
       return;
+
     }
+
 
     setShowModal(false);
 
@@ -285,14 +332,18 @@ function Subjects() {
       const response = await fetch(
         "http://127.0.0.1:8000/subjects",
         {
+
           method: "POST",
 
           headers: {
-            "Content-Type": "application/json",
+            "Content-Type":
+              "application/json",
           },
 
           body: JSON.stringify({
-            name: formData.name.trim(),
+
+            name:
+              formData.name.trim(),
 
             short_name:
               formData.short_name
@@ -300,21 +351,28 @@ function Subjects() {
                 .toUpperCase(),
 
             progress:
-              Number(formData.progress),
+              Number(
+                formData.progress
+              ),
 
             topics:
-              Number(formData.topics),
+              Number(
+                formData.topics
+              ),
 
             assignments:
-              Number(formData.assignments),
+              Number(
+                formData.assignments
+              ),
 
-            color: formData.color,
           }),
+
         }
       );
 
 
-      const data = await response.json();
+      const data =
+        await response.json();
 
 
       if (!response.ok) {
@@ -333,12 +391,17 @@ function Subjects() {
 
 
       setFormData({
+
         name: "",
+
         short_name: "",
+
         progress: 0,
+
         topics: 0,
+
         assignments: 0,
-        color: "blue",
+
       });
 
 
@@ -366,23 +429,44 @@ function Subjects() {
   }
 
 
-  const totalTopics = subjects.reduce(
-    (total, subject) =>
-      total + Number(subject.topics || 0),
-    0
-  );
+  const totalTopics =
+    subjects.reduce(
+
+      (total, subject) =>
+
+        total +
+        Number(
+          subject.syllabus_topics ??
+          subject.topics ??
+          0
+        ),
+
+      0
+
+    );
 
 
-  const totalAssignments = subjects.reduce(
-    (total, subject) =>
-      total + Number(subject.assignments || 0),
-    0
-  );
+  const totalAssignments =
+    subjects.reduce(
+
+      (total, subject) =>
+
+        total +
+        Number(
+          subject.assignments || 0
+        ),
+
+      0
+
+    );
 
 
   return (
 
     <section className="dashboard-content">
+
+
+      {/* PAGE HEADER */}
 
       <div className="subjects-header">
 
@@ -405,7 +489,9 @@ function Subjects() {
 
         <button
           className="primary-button"
-          onClick={openAddSubjectModal}
+          onClick={
+            openAddSubjectModal
+          }
         >
 
           <Plus size={16} />
@@ -416,6 +502,8 @@ function Subjects() {
 
       </div>
 
+
+      {/* LOADING STATE */}
 
       {loading && (
 
@@ -436,6 +524,8 @@ function Subjects() {
       )}
 
 
+      {/* ERROR STATE */}
+
       {!loading && error && (
 
         <div className="empty-task-state">
@@ -455,11 +545,15 @@ function Subjects() {
       )}
 
 
+      {/* SUBJECT CONTENT */}
+
       {!loading && !error && (
 
         <>
 
-          <div className="semester-overview">
+          {/* ACADEMIC OVERVIEW */}
+
+          <div className="academic-overview">
 
             <div>
 
@@ -474,7 +568,7 @@ function Subjects() {
             </div>
 
 
-            <div className="semester-stat">
+            <div className="academic-stat">
 
               <strong>
                 {subjects.length}
@@ -487,7 +581,7 @@ function Subjects() {
             </div>
 
 
-            <div className="semester-stat">
+            <div className="academic-stat">
 
               <strong>
                 {totalTopics}
@@ -500,7 +594,7 @@ function Subjects() {
             </div>
 
 
-            <div className="semester-stat">
+            <div className="academic-stat">
 
               <strong>
                 {totalAssignments}
@@ -515,16 +609,21 @@ function Subjects() {
           </div>
 
 
+          {/* SUBJECT CARDS */}
+
           <div className="subjects-grid">
 
-            {subjects.map((subject) => (
+            {subjects.map(
+              (subject, index) => (
 
-              <SubjectCard
-                key={subject.id}
-                subject={subject}
-              />
+                <SubjectCard
+                  key={subject.id}
+                  subject={subject}
+                  index={index}
+                />
 
-            ))}
+              )
+            )}
 
           </div>
 
@@ -533,11 +632,15 @@ function Subjects() {
       )}
 
 
+      {/* ADD SUBJECT MODAL */}
+
       {showModal && (
 
         <div
           className="modal-overlay"
-          onClick={closeAddSubjectModal}
+          onClick={
+            closeAddSubjectModal
+          }
         >
 
           <div
@@ -546,6 +649,8 @@ function Subjects() {
               event.stopPropagation()
             }
           >
+
+            {/* MODAL HEADER */}
 
             <div className="modal-header">
 
@@ -568,7 +673,9 @@ function Subjects() {
 
               <button
                 className="icon-button"
-                onClick={closeAddSubjectModal}
+                onClick={
+                  closeAddSubjectModal
+                }
                 disabled={saving}
                 aria-label="Close"
               >
@@ -580,10 +687,16 @@ function Subjects() {
             </div>
 
 
+            {/* MODAL FORM */}
+
             <form
               className="modal-form"
-              onSubmit={handleCreateSubject}
+              onSubmit={
+                handleCreateSubject
+              }
             >
+
+              {/* SUBJECT NAME */}
 
               <div className="form-group">
 
@@ -597,84 +710,43 @@ function Subjects() {
                   type="text"
                   placeholder="e.g. Computer Networks"
                   value={formData.name}
-                  onChange={handleInputChange}
+                  onChange={
+                    handleInputChange
+                  }
                   disabled={saving}
                 />
 
               </div>
 
 
-              <div className="form-row">
+              {/* SHORT NAME */}
 
-                <div className="form-group">
+              <div className="form-group">
 
-                  <label htmlFor="subject-short-name">
-                    Short Name
-                  </label>
+                <label htmlFor="subject-short-name">
+                  Short Name
+                </label>
 
-                  <input
-                    id="subject-short-name"
-                    name="short_name"
-                    type="text"
-                    placeholder="e.g. CN"
-                    value={formData.short_name}
-                    onChange={handleInputChange}
-                    disabled={saving}
-                  />
-
-                </div>
-
-
-                <div className="form-group">
-
-                  <label htmlFor="subject-color">
-                    Color
-                  </label>
-
-                  <select
-                    id="subject-color"
-                    name="color"
-                    value={formData.color}
-                    onChange={handleInputChange}
-                    disabled={saving}
-                  >
-
-                    <option value="blue">
-                      Blue
-                    </option>
-
-                    <option value="burgundy">
-                      Burgundy
-                    </option>
-
-                  </select>
-
-                </div>
+                <input
+                  id="subject-short-name"
+                  name="short_name"
+                  type="text"
+                  placeholder="e.g. CN"
+                  value={
+                    formData.short_name
+                  }
+                  onChange={
+                    handleInputChange
+                  }
+                  disabled={saving}
+                />
 
               </div>
 
 
+              {/* TOPICS + ASSIGNMENTS */}
+
               <div className="form-row">
-
-                <div className="form-group">
-
-                  <label htmlFor="subject-progress">
-                    Progress (%)
-                  </label>
-
-                  <input
-                    id="subject-progress"
-                    name="progress"
-                    type="number"
-                    min="0"
-                    max="100"
-                    value={formData.progress}
-                    onChange={handleInputChange}
-                    disabled={saving}
-                  />
-
-                </div>
-
 
                 <div className="form-group">
 
@@ -687,8 +759,12 @@ function Subjects() {
                     name="topics"
                     type="number"
                     min="0"
-                    value={formData.topics}
-                    onChange={handleInputChange}
+                    value={
+                      formData.topics
+                    }
+                    onChange={
+                      handleInputChange
+                    }
                     disabled={saving}
                   />
 
@@ -706,8 +782,12 @@ function Subjects() {
                     name="assignments"
                     type="number"
                     min="0"
-                    value={formData.assignments}
-                    onChange={handleInputChange}
+                    value={
+                      formData.assignments
+                    }
+                    onChange={
+                      handleInputChange
+                    }
                     disabled={saving}
                   />
 
@@ -716,24 +796,34 @@ function Subjects() {
               </div>
 
 
+              {/* ERROR */}
+
               {formError && (
 
                 <div className="form-error">
+
                   {formError}
+
                 </div>
 
               )}
 
+
+              {/* ACTIONS */}
 
               <div className="modal-actions">
 
                 <button
                   type="button"
                   className="secondary-button"
-                  onClick={closeAddSubjectModal}
+                  onClick={
+                    closeAddSubjectModal
+                  }
                   disabled={saving}
                 >
+
                   Cancel
+
                 </button>
 
 

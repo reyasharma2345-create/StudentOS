@@ -7,7 +7,6 @@ from datetime import datetime
 from typing import Optional
 from database import get_db
 import os
-import re
 import httpx
 from pypdf import PdfReader
 
@@ -21,7 +20,7 @@ app = FastAPI(title="StudentOS API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -35,193 +34,39 @@ app.add_middleware(
 @app.get("/")
 def root():
     return {
-        "message": "StudentOS Backend is running 🚀"
+        "message": "StudentOS Backend is running"
     }
 
 
 @app.get("/health")
 def health():
     return {
-        "status": "ok"
+        "status": "healthy"
     }
-
-
-# ============================================================
-# SUBJECT MODELS
-# ============================================================
-
-class SubjectCreate(BaseModel):
-    name: str
-    short_name: str
-    color: Optional[str] = "#3B82F6"
-    topics: Optional[int] = 0
-    assignments: Optional[int] = 0
-    progress: Optional[int] = 0
-
-
-# ============================================================
-# AUTOMATIC SUBJECT PROGRESS
-# ============================================================
-
-def calculate_subject_progress(connection, subject_id):
-
-    result = connection.execute(
-        text("""
-            SELECT
-                COUNT(st.id) AS total_topics,
-                COUNT(
-                    CASE
-                        WHEN LOWER(st.status) = 'completed'
-                        THEN 1
-                    END
-                ) AS completed_topics
-            FROM syllabus_units su
-            LEFT JOIN syllabus_topics st
-                ON st.unit_id = su.id
-            WHERE su.subject_id = :subject_id
-        """),
-        {
-            "subject_id": subject_id
-        }
-    ).fetchone()
-
-    total_topics = int(result.total_topics or 0)
-    completed_topics = int(result.completed_topics or 0)
-
-    if total_topics == 0:
-        return 0
-
-    return round(
-        completed_topics / total_topics * 100
-    )
 
 
 # ============================================================
 # SUBJECTS
 # ============================================================
 
-@app.get("/subjects")
-def get_subjects(db: Session = Depends(get_db)):
-
-    query = text("""
-        SELECT
-            s.id,
-            s.name,
-            s.short_name,
-            s.color,
-            s.topics AS stored_topics,
-            s.assignments,
-            s.progress AS stored_progress,
-
-            COUNT(DISTINCT st.id) AS syllabus_topics,
-
-            COUNT(
-                DISTINCT CASE
-                    WHEN LOWER(st.status) = 'completed'
-                    THEN st.id
-                END
-            ) AS completed_topics
-
-        FROM subjects s
-
-        LEFT JOIN syllabus_units su
-            ON su.subject_id = s.id
-
-        LEFT JOIN syllabus_topics st
-            ON st.unit_id = su.id
-
-        GROUP BY
-            s.id,
-            s.name,
-            s.short_name,
-            s.color,
-            s.topics,
-            s.assignments,
-            s.progress
-
-        ORDER BY s.id
-    """)
-
-    rows = db.execute(query).mappings().all()
-
-    subjects = []
-
-    for row in rows:
-
-        syllabus_topics = int(row["syllabus_topics"] or 0)
-        completed_topics = int(row["completed_topics"] or 0)
-
-        if syllabus_topics > 0:
-
-            progress = round(
-                completed_topics / syllabus_topics * 100
-            )
-
-            topics = syllabus_topics
-
-        else:
-
-            progress = row["stored_progress"] or 0
-            topics = row["stored_topics"] or 0
-
-        subjects.append({
-            "id": row["id"],
-            "name": row["name"],
-            "short_name": row["short_name"],
-            "color": row["color"],
-            "topics": topics,
-            "assignments": row["assignments"] or 0,
-            "progress": progress,
-            "completed_topics": completed_topics,
-            "syllabus_topics": syllabus_topics
-        })
-
-    return subjects
+class SubjectCreate(BaseModel):
+    name: str
 
 
-@app.get("/subjects/{subject_id}")
-def get_subject(
+def get_subject_syllabus_stats(
     subject_id: int,
-    db: Session = Depends(get_db)
+    db: Session
 ):
-
     query = text("""
         SELECT
-            s.id,
-            s.name,
-            s.short_name,
-            s.color,
-            s.topics AS stored_topics,
-            s.assignments,
-            s.progress AS stored_progress,
-
-            COUNT(DISTINCT st.id) AS syllabus_topics,
-
-            COUNT(
-                DISTINCT CASE
-                    WHEN LOWER(st.status) = 'completed'
-                    THEN st.id
-                END
+            COUNT(st.id) AS total_topics,
+            COUNT(st.id) FILTER (
+                WHERE LOWER(TRIM(st.status)) = 'completed'
             ) AS completed_topics
-
-        FROM subjects s
-
-        LEFT JOIN syllabus_units su
-            ON su.subject_id = s.id
-
-        LEFT JOIN syllabus_topics st
+        FROM syllabus_topics st
+        JOIN syllabus_units su
             ON st.unit_id = su.id
-
-        WHERE s.id = :subject_id
-
-        GROUP BY
-            s.id,
-            s.name,
-            s.short_name,
-            s.color,
-            s.topics,
-            s.assignments,
-            s.progress
+        WHERE su.subject_id = :subject_id
     """)
 
     row = db.execute(
@@ -231,39 +76,181 @@ def get_subject(
         }
     ).mappings().first()
 
-    if not row:
+    total_topics = int(
+        row["total_topics"] or 0
+    ) if row else 0
 
+    completed_topics = int(
+        row["completed_topics"] or 0
+    ) if row else 0
+
+    if total_topics > 0:
+        progress = round(
+            (completed_topics / total_topics) * 100
+        )
+    else:
+        progress = 0
+
+    return {
+        "syllabus_topics": total_topics,
+        "completed_topics": completed_topics,
+        "progress": progress
+    }
+
+
+def calculate_subject_progress(
+    subject_id: int,
+    db: Session
+):
+    stats = get_subject_syllabus_stats(
+        subject_id,
+        db
+    )
+
+    return stats["progress"]
+
+
+def calculate_overall_progress(
+    subjects,
+    db: Session
+):
+    total_topics = 0
+    completed_topics = 0
+
+    for subject in subjects:
+        stats = get_subject_syllabus_stats(
+            subject["id"],
+            db
+        )
+
+        total_topics += stats["syllabus_topics"]
+        completed_topics += stats["completed_topics"]
+
+    if total_topics == 0:
+        return 0
+
+    return round(
+        (completed_topics / total_topics) * 100
+    )
+
+
+@app.get("/subjects")
+def get_subjects(
+    db: Session = Depends(get_db)
+):
+    query = text("""
+        SELECT
+            id,
+            name
+        FROM subjects
+        ORDER BY id
+    """)
+
+    subjects = db.execute(
+        query
+    ).mappings().all()
+
+    result = []
+
+    for subject in subjects:
+
+        stats = get_subject_syllabus_stats(
+            subject["id"],
+            db
+        )
+
+        result.append({
+            "id": subject["id"],
+            "name": subject["name"],
+            "progress": stats["progress"],
+            "syllabus_topics": stats["syllabus_topics"],
+            "completed_topics": stats["completed_topics"]
+        })
+
+    return result
+
+
+@app.get("/subjects/{subject_id}")
+def get_subject(
+    subject_id: int,
+    db: Session = Depends(get_db)
+):
+    query = text("""
+        SELECT
+            id,
+            name
+        FROM subjects
+        WHERE id = :subject_id
+    """)
+
+    subject = db.execute(
+        query,
+        {
+            "subject_id": subject_id
+        }
+    ).mappings().first()
+
+    if not subject:
         raise HTTPException(
             status_code=404,
             detail="Subject not found"
         )
 
-    syllabus_topics = int(row["syllabus_topics"] or 0)
-    completed_topics = int(row["completed_topics"] or 0)
-
-    if syllabus_topics > 0:
-
-        progress = round(
-            completed_topics / syllabus_topics * 100
-        )
-
-        topics = syllabus_topics
-
-    else:
-
-        progress = row["stored_progress"] or 0
-        topics = row["stored_topics"] or 0
+    stats = get_subject_syllabus_stats(
+        subject_id,
+        db
+    )
 
     return {
-        "id": row["id"],
-        "name": row["name"],
-        "short_name": row["short_name"],
-        "color": row["color"],
-        "topics": topics,
-        "assignments": row["assignments"] or 0,
+        "id": subject["id"],
+        "name": subject["name"],
+        "progress": stats["progress"],
+        "syllabus_topics": stats["syllabus_topics"],
+        "completed_topics": stats["completed_topics"]
+    }
+
+
+@app.get("/progress")
+def get_overall_progress(
+    db: Session = Depends(get_db)
+):
+    query = text("""
+        SELECT
+            id,
+            name
+        FROM subjects
+        ORDER BY id
+    """)
+
+    subjects = db.execute(
+        query
+    ).mappings().all()
+
+    total_topics = 0
+    completed_topics = 0
+
+    for subject in subjects:
+
+        stats = get_subject_syllabus_stats(
+            subject["id"],
+            db
+        )
+
+        total_topics += stats["syllabus_topics"]
+        completed_topics += stats["completed_topics"]
+
+    progress = (
+        round(
+            (completed_topics / total_topics) * 100
+        )
+        if total_topics > 0
+        else 0
+    )
+
+    return {
         "progress": progress,
-        "completed_topics": completed_topics,
-        "syllabus_topics": syllabus_topics
+        "total_topics": total_topics,
+        "completed_topics": completed_topics
     }
 
 
@@ -272,44 +259,34 @@ def create_subject(
     subject: SubjectCreate,
     db: Session = Depends(get_db)
 ):
-
     query = text("""
-        INSERT INTO subjects
-        (
-            name,
-            short_name,
-            color,
-            topics,
-            assignments,
-            progress
+        INSERT INTO subjects (
+            name
         )
-        VALUES
-        (
-            :name,
-            :short_name,
-            :color,
-            :topics,
-            :assignments,
-            :progress
+        VALUES (
+            :name
         )
         RETURNING
             id,
-            name,
-            short_name,
-            color,
-            topics,
-            assignments,
-            progress
+            name
     """)
 
     row = db.execute(
         query,
-        subject.model_dump()
+        {
+            "name": subject.name
+        }
     ).mappings().first()
 
     db.commit()
 
-    return dict(row)
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "progress": 0,
+        "syllabus_topics": 0,
+        "completed_topics": 0
+    }
 
 
 @app.put("/subjects/{subject_id}")
@@ -318,36 +295,25 @@ def update_subject(
     subject: SubjectCreate,
     db: Session = Depends(get_db)
 ):
-
     query = text("""
         UPDATE subjects
         SET
-            name = :name,
-            short_name = :short_name,
-            color = :color
+            name = :name
         WHERE id = :subject_id
         RETURNING
             id,
-            name,
-            short_name,
-            color,
-            topics,
-            assignments,
-            progress
+            name
     """)
 
     row = db.execute(
         query,
         {
             "subject_id": subject_id,
-            "name": subject.name,
-            "short_name": subject.short_name,
-            "color": subject.color
+            "name": subject.name
         }
     ).mappings().first()
 
     if not row:
-
         raise HTTPException(
             status_code=404,
             detail="Subject not found"
@@ -355,7 +321,18 @@ def update_subject(
 
     db.commit()
 
-    return dict(row)
+    stats = get_subject_syllabus_stats(
+        subject_id,
+        db
+    )
+
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "progress": stats["progress"],
+        "syllabus_topics": stats["syllabus_topics"],
+        "completed_topics": stats["completed_topics"]
+    }
 
 
 @app.delete("/subjects/{subject_id}")
@@ -363,19 +340,20 @@ def delete_subject(
     subject_id: int,
     db: Session = Depends(get_db)
 ):
+    query = text("""
+        DELETE FROM subjects
+        WHERE id = :subject_id
+        RETURNING id
+    """)
 
-    result = db.execute(
-        text("""
-            DELETE FROM subjects
-            WHERE id = :subject_id
-        """),
+    row = db.execute(
+        query,
         {
             "subject_id": subject_id
         }
-    )
+    ).mappings().first()
 
-    if result.rowcount == 0:
-
+    if not row:
         raise HTTPException(
             status_code=404,
             detail="Subject not found"
@@ -389,25 +367,22 @@ def delete_subject(
 
 
 # ============================================================
-# TASK MODELS
+# TASKS
 # ============================================================
 
 class TaskCreate(BaseModel):
     title: str
     description: Optional[str] = None
-    subject_id: int
-    due_date: Optional[str] = None
+    subject_id: Optional[int] = None
+    due_date: Optional[datetime] = None
     priority: Optional[str] = "Medium"
     status: Optional[str] = "Pending"
 
 
-# ============================================================
-# TASKS
-# ============================================================
-
 @app.get("/tasks")
-def get_tasks(db: Session = Depends(get_db)):
-
+def get_tasks(
+    db: Session = Depends(get_db)
+):
     query = text("""
         SELECT
             t.id,
@@ -415,22 +390,26 @@ def get_tasks(db: Session = Depends(get_db)):
             t.description,
             t.subject_id,
             s.name AS subject_name,
-            s.short_name AS subject_short_name,
             t.due_date,
             t.priority,
             t.status,
             t.created_at
         FROM tasks t
-        JOIN subjects s
+        LEFT JOIN subjects s
             ON t.subject_id = s.id
         ORDER BY
             t.due_date NULLS LAST,
             t.id DESC
     """)
 
-    rows = db.execute(query).mappings().all()
+    tasks = db.execute(
+        query
+    ).mappings().all()
 
-    return [dict(row) for row in rows]
+    return [
+        dict(task)
+        for task in tasks
+    ]
 
 
 @app.get("/tasks/{task_id}")
@@ -438,7 +417,6 @@ def get_task(
     task_id: int,
     db: Session = Depends(get_db)
 ):
-
     query = text("""
         SELECT
             t.id,
@@ -446,32 +424,30 @@ def get_task(
             t.description,
             t.subject_id,
             s.name AS subject_name,
-            s.short_name AS subject_short_name,
             t.due_date,
             t.priority,
             t.status,
             t.created_at
         FROM tasks t
-        JOIN subjects s
+        LEFT JOIN subjects s
             ON t.subject_id = s.id
         WHERE t.id = :task_id
     """)
 
-    row = db.execute(
+    task = db.execute(
         query,
         {
             "task_id": task_id
         }
     ).mappings().first()
 
-    if not row:
-
+    if not task:
         raise HTTPException(
             status_code=404,
             detail="Task not found"
         )
 
-    return dict(row)
+    return dict(task)
 
 
 @app.post("/tasks")
@@ -479,10 +455,8 @@ def create_task(
     task: TaskCreate,
     db: Session = Depends(get_db)
 ):
-
     query = text("""
-        INSERT INTO tasks
-        (
+        INSERT INTO tasks (
             title,
             description,
             subject_id,
@@ -490,8 +464,7 @@ def create_task(
             priority,
             status
         )
-        VALUES
-        (
+        VALUES (
             :title,
             :description,
             :subject_id,
@@ -512,7 +485,14 @@ def create_task(
 
     row = db.execute(
         query,
-        task.model_dump()
+        {
+            "title": task.title,
+            "description": task.description,
+            "subject_id": task.subject_id,
+            "due_date": task.due_date,
+            "priority": task.priority,
+            "status": task.status
+        }
     ).mappings().first()
 
     db.commit()
@@ -526,7 +506,6 @@ def update_task(
     task: TaskCreate,
     db: Session = Depends(get_db)
 ):
-
     query = text("""
         UPDATE tasks
         SET
@@ -552,12 +531,16 @@ def update_task(
         query,
         {
             "task_id": task_id,
-            **task.model_dump()
+            "title": task.title,
+            "description": task.description,
+            "subject_id": task.subject_id,
+            "due_date": task.due_date,
+            "priority": task.priority,
+            "status": task.status
         }
     ).mappings().first()
 
     if not row:
-
         raise HTTPException(
             status_code=404,
             detail="Task not found"
@@ -573,19 +556,20 @@ def delete_task(
     task_id: int,
     db: Session = Depends(get_db)
 ):
+    query = text("""
+        DELETE FROM tasks
+        WHERE id = :task_id
+        RETURNING id
+    """)
 
-    result = db.execute(
-        text("""
-            DELETE FROM tasks
-            WHERE id = :task_id
-        """),
+    row = db.execute(
+        query,
         {
             "task_id": task_id
         }
-    )
+    ).mappings().first()
 
-    if result.rowcount == 0:
-
+    if not row:
         raise HTTPException(
             status_code=404,
             detail="Task not found"
@@ -599,49 +583,47 @@ def delete_task(
 
 
 # ============================================================
-# STUDY SESSION MODELS
+# STUDY SESSIONS
 # ============================================================
 
 class StudySessionCreate(BaseModel):
-    subject_id: int
-    start_time: datetime
-    end_time: Optional[datetime] = None
-    duration_minutes: Optional[int] = 0
+    subject_id: Optional[int] = None
     topic: Optional[str] = None
+    duration_minutes: int
+    session_date: Optional[datetime] = None
     notes: Optional[str] = None
 
-
-# ============================================================
-# STUDY SESSIONS
-# ============================================================
 
 @app.get("/study-sessions")
 def get_study_sessions(
     db: Session = Depends(get_db)
 ):
-
     query = text("""
         SELECT
             ss.id,
             ss.subject_id,
             s.name AS subject_name,
-            s.short_name AS subject_short_name,
-            ss.start_time,
-            ss.end_time,
-            ss.duration_minutes,
             ss.topic,
+            ss.duration_minutes,
+            ss.session_date,
             ss.notes,
             ss.created_at
         FROM study_sessions ss
-        JOIN subjects s
+        LEFT JOIN subjects s
             ON ss.subject_id = s.id
         ORDER BY
-            ss.start_time DESC
+            ss.session_date DESC,
+            ss.id DESC
     """)
 
-    rows = db.execute(query).mappings().all()
+    sessions = db.execute(
+        query
+    ).mappings().all()
 
-    return [dict(row) for row in rows]
+    return [
+        dict(session)
+        for session in sessions
+    ]
 
 
 @app.get("/study-sessions/{session_id}")
@@ -649,40 +631,36 @@ def get_study_session(
     session_id: int,
     db: Session = Depends(get_db)
 ):
-
     query = text("""
         SELECT
             ss.id,
             ss.subject_id,
             s.name AS subject_name,
-            s.short_name AS subject_short_name,
-            ss.start_time,
-            ss.end_time,
-            ss.duration_minutes,
             ss.topic,
+            ss.duration_minutes,
+            ss.session_date,
             ss.notes,
             ss.created_at
         FROM study_sessions ss
-        JOIN subjects s
+        LEFT JOIN subjects s
             ON ss.subject_id = s.id
         WHERE ss.id = :session_id
     """)
 
-    row = db.execute(
+    session = db.execute(
         query,
         {
             "session_id": session_id
         }
     ).mappings().first()
 
-    if not row:
-
+    if not session:
         raise HTTPException(
             status_code=404,
             detail="Study session not found"
         )
 
-    return dict(row)
+    return dict(session)
 
 
 @app.post("/study-sessions")
@@ -690,40 +668,40 @@ def create_study_session(
     session: StudySessionCreate,
     db: Session = Depends(get_db)
 ):
-
     query = text("""
-        INSERT INTO study_sessions
-        (
+        INSERT INTO study_sessions (
             subject_id,
-            start_time,
-            end_time,
-            duration_minutes,
             topic,
+            duration_minutes,
+            session_date,
             notes
         )
-        VALUES
-        (
+        VALUES (
             :subject_id,
-            :start_time,
-            :end_time,
-            :duration_minutes,
             :topic,
+            :duration_minutes,
+            :session_date,
             :notes
         )
         RETURNING
             id,
             subject_id,
-            start_time,
-            end_time,
-            duration_minutes,
             topic,
+            duration_minutes,
+            session_date,
             notes,
             created_at
     """)
 
     row = db.execute(
         query,
-        session.model_dump()
+        {
+            "subject_id": session.subject_id,
+            "topic": session.topic,
+            "duration_minutes": session.duration_minutes,
+            "session_date": session.session_date or datetime.now(),
+            "notes": session.notes
+        }
     ).mappings().first()
 
     db.commit()
@@ -737,24 +715,21 @@ def update_study_session(
     session: StudySessionCreate,
     db: Session = Depends(get_db)
 ):
-
     query = text("""
         UPDATE study_sessions
         SET
             subject_id = :subject_id,
-            start_time = :start_time,
-            end_time = :end_time,
-            duration_minutes = :duration_minutes,
             topic = :topic,
+            duration_minutes = :duration_minutes,
+            session_date = :session_date,
             notes = :notes
         WHERE id = :session_id
         RETURNING
             id,
             subject_id,
-            start_time,
-            end_time,
-            duration_minutes,
             topic,
+            duration_minutes,
+            session_date,
             notes,
             created_at
     """)
@@ -763,12 +738,15 @@ def update_study_session(
         query,
         {
             "session_id": session_id,
-            **session.model_dump()
+            "subject_id": session.subject_id,
+            "topic": session.topic,
+            "duration_minutes": session.duration_minutes,
+            "session_date": session.session_date,
+            "notes": session.notes
         }
     ).mappings().first()
 
     if not row:
-
         raise HTTPException(
             status_code=404,
             detail="Study session not found"
@@ -784,19 +762,20 @@ def delete_study_session(
     session_id: int,
     db: Session = Depends(get_db)
 ):
+    query = text("""
+        DELETE FROM study_sessions
+        WHERE id = :session_id
+        RETURNING id
+    """)
 
-    result = db.execute(
-        text("""
-            DELETE FROM study_sessions
-            WHERE id = :session_id
-        """),
+    row = db.execute(
+        query,
         {
             "session_id": session_id
         }
-    )
+    ).mappings().first()
 
-    if result.rowcount == 0:
-
+    if not row:
         raise HTTPException(
             status_code=404,
             detail="Study session not found"
@@ -813,12 +792,10 @@ def delete_study_session(
 # SYLLABUS
 # ============================================================
 
-@app.get("/subjects/{subject_id}/syllabus")
-def get_subject_syllabus(
+def build_syllabus(
     subject_id: int,
-    db: Session = Depends(get_db)
+    db: Session
 ):
-
     units_query = text("""
         SELECT
             id,
@@ -871,6 +848,84 @@ def get_subject_syllabus(
     return result
 
 
+# ------------------------------------------------------------
+# MAIN SYLLABUS ROUTE
+# ------------------------------------------------------------
+
+@app.get("/syllabus/{subject_id}")
+def get_syllabus(
+    subject_id: int,
+    db: Session = Depends(get_db)
+):
+    subject_query = text("""
+        SELECT
+            id,
+            name
+        FROM subjects
+        WHERE id = :subject_id
+    """)
+
+    subject = db.execute(
+        subject_query,
+        {
+            "subject_id": subject_id
+        }
+    ).mappings().first()
+
+    if not subject:
+        raise HTTPException(
+            status_code=404,
+            detail="Subject not found"
+        )
+
+    result = build_syllabus(
+        subject_id,
+        db
+    )
+
+    return {
+        "subject_id": subject_id,
+        "subject_name": subject["name"],
+        "units": result
+    }
+
+
+# ------------------------------------------------------------
+# OLD SYLLABUS ROUTE - KEPT FOR COMPATIBILITY
+# ------------------------------------------------------------
+
+@app.get("/subjects/{subject_id}/syllabus")
+def get_subject_syllabus(
+    subject_id: int,
+    db: Session = Depends(get_db)
+):
+    subject_query = text("""
+        SELECT
+            id,
+            name
+        FROM subjects
+        WHERE id = :subject_id
+    """)
+
+    subject = db.execute(
+        subject_query,
+        {
+            "subject_id": subject_id
+        }
+    ).mappings().first()
+
+    if not subject:
+        raise HTTPException(
+            status_code=404,
+            detail="Subject not found"
+        )
+
+    return build_syllabus(
+        subject_id,
+        db
+    )
+
+
 class TopicStatusUpdate(BaseModel):
     status: Optional[str] = None
     mastery: Optional[int] = None
@@ -882,7 +937,6 @@ def update_syllabus_topic(
     update: TopicStatusUpdate,
     db: Session = Depends(get_db)
 ):
-
     query = text("""
         UPDATE syllabus_topics
         SET
@@ -907,7 +961,6 @@ def update_syllabus_topic(
     ).mappings().first()
 
     if not row:
-
         raise HTTPException(
             status_code=404,
             detail="Syllabus topic not found"
@@ -919,110 +972,111 @@ def update_syllabus_topic(
 
 
 # ============================================================
-# PDF SYLLABUS PARSING
+# SYLLABUS PDF UPLOAD
 # ============================================================
-
-def clean_text(text_value):
-
-    if not text_value:
-        return ""
-
-    return " ".join(
-        text_value.replace("\n", " ").split()
-    )
-
 
 @app.post("/syllabus/upload")
 async def upload_syllabus(
-    file: UploadFile = File(...)
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db)
 ):
+    if not file.filename:
+        raise HTTPException(
+            status_code=400,
+            detail="No file selected"
+        )
 
     if not file.filename.lower().endswith(".pdf"):
-
         raise HTTPException(
             status_code=400,
             detail="Only PDF files are supported"
         )
 
-    contents = await file.read()
+    upload_directory = "uploads"
 
-    temp_path = f"temp_{file.filename}"
+    os.makedirs(
+        upload_directory,
+        exist_ok=True
+    )
+
+    file_path = os.path.join(
+        upload_directory,
+        file.filename
+    )
+
+    content = await file.read()
+
+    with open(
+        file_path,
+        "wb"
+    ) as output_file:
+        output_file.write(content)
 
     try:
+        reader = PdfReader(file_path)
 
-        with open(temp_path, "wb") as output_file:
-            output_file.write(contents)
-
-        reader = PdfReader(temp_path)
-
-        pages = []
+        extracted_text = ""
 
         for page in reader.pages:
+            page_text = page.extract_text()
 
-            page_text = page.extract_text() or ""
-            pages.append(page_text)
+            if page_text:
+                extracted_text += page_text + "\n"
 
-        full_text = "\n".join(pages)
+    except Exception as error:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Could not read PDF: {str(error)}"
+        )
 
-        return {
-            "filename": file.filename,
-            "pages": len(reader.pages),
-            "characters": len(full_text),
-            "text": full_text
-        }
-
-    finally:
-
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
+    return {
+        "message": "Syllabus PDF uploaded successfully",
+        "filename": file.filename,
+        "pages": len(reader.pages),
+        "text_length": len(extracted_text)
+    }
 
 
 # ============================================================
-# OPENALEX HELPERS
+# RESEARCH / OPENALEX
 # ============================================================
 
-def normalize_search_text(value):
+async def search_openalex(
+    query: str,
+    limit: int = 5
+):
+    url = "https://api.openalex.org/works"
 
-    if not value:
-        return ""
+    params = {
+        "filter": f"display_name.search:{query}",
+        "per_page": limit
+    }
 
-    value = value.lower()
+    async with httpx.AsyncClient(
+        timeout=20
+    ) as client:
 
-    value = re.sub(
-        r"[^a-z0-9\s-]",
-        " ",
-        value
-    )
+        response = await client.get(
+            url,
+            params=params
+        )
 
-    return " ".join(
-        value.split()
-    )
+        response.raise_for_status()
 
-
-def get_query_words(query):
-
-    normalized_query = normalize_search_text(
-        query
-    )
-
-    return [
-        word
-        for word in normalized_query.split()
-        if len(word) > 1
-    ]
+        return response.json()
 
 
-def reconstruct_abstract(inverted_index):
-
+def extract_abstract(
+    inverted_index
+):
     if not inverted_index:
-        return None
+        return ""
 
     words = []
 
     for word, positions in inverted_index.items():
 
         for position in positions:
-
             words.append(
                 (position, word)
             )
@@ -1037,689 +1091,173 @@ def reconstruct_abstract(inverted_index):
     )
 
 
-def calculate_research_score(
-    query,
-    title,
-    abstract
-):
-
-    normalized_query = normalize_search_text(
-        query
-    )
-
-    normalized_title = normalize_search_text(
-        title
-    )
-
-    normalized_abstract = normalize_search_text(
-        abstract
-    )
-
-    query_words = get_query_words(
-        query
-    )
-
-    if not query_words:
-        return 0
-
-    score = 0
-
-    # ========================================================
-    # EXACT PHRASE IN TITLE
-    # ========================================================
-
-    if normalized_query in normalized_title:
-
-        score += 1000
-
-    # ========================================================
-    # TITLE WORD COVERAGE
-    # ========================================================
-
-    title_matches = 0
-
-    for word in query_words:
-
-        if word in normalized_title:
-
-            title_matches += 1
-
-    title_ratio = (
-        title_matches / len(query_words)
-    )
-
-    score += int(
-        title_ratio * 700
-    )
-
-    # ========================================================
-    # ABSTRACT WORD COVERAGE
-    # ========================================================
-
-    abstract_matches = 0
-
-    for word in query_words:
-
-        if word in normalized_abstract:
-
-            abstract_matches += 1
-
-    abstract_ratio = (
-        abstract_matches / len(query_words)
-    )
-
-    score += int(
-        abstract_ratio * 150
-    )
-
-    # ========================================================
-    # TITLE MATCH BONUS
-    # ========================================================
-
-    if title_matches > 0:
-
-        score += 100
-
-    # ========================================================
-    # NO TITLE MATCH PENALTY
-    # ========================================================
-
-    if title_matches == 0:
-
-        score -= 400
-
-    # ========================================================
-    # MULTI-WORD PARTIAL MATCH PENALTY
-    # ========================================================
-
-    if len(query_words) >= 2:
-
-        missing_words = (
-            len(query_words)
-            - title_matches
-        )
-
-        score -= missing_words * 75
-
-    # ========================================================
-    # TITLE WORD ORDER BONUS
-    # ========================================================
-
-    if len(query_words) >= 2:
-
-        title_positions = []
-
-        for word in query_words:
-
-            position = normalized_title.find(
-                word
-            )
-
-            if position >= 0:
-
-                title_positions.append(
-                    position
-                )
-
-        if len(title_positions) >= 2:
-
-            if title_positions == sorted(
-                title_positions
-            ):
-
-                score += 50
-
-    return score
-
-
-def normalize_openalex_work(
-    work,
-    query
-):
-
-    abstract = reconstruct_abstract(
-        work.get(
-            "abstract_inverted_index"
-        )
-    )
-
-    authors = []
-
-    for authorship in work.get(
-        "authorships",
-        []
-    ):
-
-        author = authorship.get(
-            "author"
-        )
-
-        if author and author.get(
-            "display_name"
-        ):
-
-            authors.append(
-                author["display_name"]
-            )
-
-    title = (
-        work.get("display_name")
-        or work.get("title")
-    )
-
-    local_score = calculate_research_score(
-        query=query,
-        title=title or "",
-        abstract=abstract
-    )
-
-    # OpenAlex itself provides a relevance score
-    # when using its search functionality.
-    openalex_score = work.get(
-        "relevance_score"
-    )
-
-    if openalex_score is None:
-
-        openalex_score = 0
-
-    # Combine OpenAlex's relevance with our
-    # lightweight title/abstract relevance.
-    final_score = (
-        float(openalex_score) * 100
-        + local_score
-    )
-
-    return {
-        "id": work.get("id"),
-        "title": title,
-        "publication_year": work.get(
-            "publication_year"
-        ),
-        "publication_date": work.get(
-            "publication_date"
-        ),
-        "type": work.get(
-            "type"
-        ),
-        "doi": work.get(
-            "doi"
-        ),
-        "cited_by_count": work.get(
-            "cited_by_count",
-            0
-        ),
-        "authors": authors,
-        "abstract": abstract,
-        "open_access": work.get(
-            "open_access"
-        ),
-        "_relevance_score": final_score
-    }
-
-
-# ============================================================
-# RESEARCH API
-# ============================================================
-
 @app.get("/research")
 async def research(
     query: str,
     limit: int = 5
 ):
-
-    query = query.strip()
-
-    if not query:
-
+    if not query.strip():
         raise HTTPException(
             status_code=400,
             detail="Research query cannot be empty"
         )
 
-    if limit < 1:
-        limit = 1
-
-    if limit > 20:
-        limit = 20
-
-    # Ask OpenAlex for a larger candidate set.
-    # We will locally rank the candidates afterwards.
-    candidate_limit = min(
-        max(limit * 10, 30),
-        100
-    )
-
-    # Keep the tested OpenAlex query format.
-    params = {
-        "q": query,
-        "per_page": candidate_limit
-    }
-
-    headers = {
-        "User-Agent": "StudentOS/1.0"
-    }
-
     try:
+        data = await search_openalex(
+            query,
+            limit
+        )
 
-        async with httpx.AsyncClient(
-            timeout=20.0
-        ) as client:
-
-            response = await client.get(
-                "https://api.openalex.org/works",
-                params=params,
-                headers=headers
-            )
-
-    except httpx.TimeoutException:
-
+    except Exception as error:
         raise HTTPException(
-            status_code=504,
-            detail=(
-                "OpenAlex took too long to respond. "
-                "Please try again shortly."
-            )
+            status_code=500,
+            detail=f"Research API error: {str(error)}"
         )
-
-    except httpx.RequestError:
-
-        raise HTTPException(
-            status_code=502,
-            detail=(
-                "Could not connect to OpenAlex. "
-                "Please try again shortly."
-            )
-        )
-
-    # ========================================================
-    # RATE LIMIT
-    # ========================================================
-
-    if response.status_code == 429:
-
-        retry_after = response.headers.get(
-            "Retry-After"
-        )
-
-        if retry_after:
-
-            detail = (
-                "OpenAlex is temporarily rate-limiting "
-                "research requests. Please try again "
-                f"after {retry_after} seconds."
-            )
-
-        else:
-
-            detail = (
-                "OpenAlex is temporarily rate-limiting "
-                "research requests. Please try again "
-                "shortly."
-            )
-
-        raise HTTPException(
-            status_code=429,
-            detail=detail
-        )
-
-    # ========================================================
-    # OTHER OPENALEX ERRORS
-    # ========================================================
-
-    if response.status_code != 200:
-
-        raise HTTPException(
-            status_code=502,
-            detail=(
-                "OpenAlex research service returned "
-                f"HTTP {response.status_code}."
-            )
-        )
-
-    try:
-
-        data = response.json()
-
-    except ValueError:
-
-        raise HTTPException(
-            status_code=502,
-            detail="OpenAlex returned invalid JSON."
-        )
-
-    raw_results = data.get(
-        "results",
-        []
-    )
 
     results = []
 
-    seen_ids = set()
+    for work in data.get(
+        "results",
+        []
+    ):
 
-    for work in raw_results:
+        authors = []
 
-        work_id = work.get("id")
+        for authorship in work.get(
+            "authorships",
+            []
+        ):
 
-        if not work_id:
-            continue
+            author = authorship.get(
+                "author"
+            )
 
-        if work_id in seen_ids:
-            continue
+            if author:
+                authors.append(
+                    author.get(
+                        "display_name"
+                    )
+                )
 
-        seen_ids.add(work_id)
+        open_access = work.get(
+            "open_access"
+        ) or {}
 
-        normalized = normalize_openalex_work(
-            work,
-            query
-        )
-
-        results.append(
-            normalized
-        )
-
-    # ========================================================
-    # LOCAL RANKING
-    # ========================================================
-
-    results.sort(
-        key=lambda item: item[
-            "_relevance_score"
-        ],
-        reverse=True
-    )
-
-    # ========================================================
-    # LIGHT FILTERING
-    # ========================================================
-
-    # Do NOT use the previous extremely strict filter.
-    # A relevant paper may mention the search terms mainly
-    # in its abstract instead of its title.
-
-    results = results[:limit]
-
-    # ========================================================
-    # REMOVE INTERNAL SCORE
-    # ========================================================
-
-    for result in results:
-
-        result.pop(
-            "_relevance_score",
-            None
-        )
+        results.append({
+            "id": work.get("id"),
+            "title": work.get("title"),
+            "publication_year": work.get(
+                "publication_year"
+            ),
+            "publication_date": work.get(
+                "publication_date"
+            ),
+            "type": work.get("type"),
+            "doi": work.get("doi"),
+            "cited_by_count": work.get(
+                "cited_by_count",
+                0
+            ),
+            "authors": authors,
+            "abstract": extract_abstract(
+                work.get(
+                    "abstract_inverted_index"
+                )
+            ),
+            "open_access": open_access.get(
+                "is_oa",
+                False
+            )
+        })
 
     return {
         "query": query,
-        "count": data.get(
-            "meta",
-            {}
-        ).get(
-            "count",
-            0
-        ),
+        "count": len(results),
         "results": results
     }
 
 
 # ============================================================
-# AI ASSISTANT — INTENT LAYER
+# AI INTENT
 # ============================================================
 
 class AIIntentRequest(BaseModel):
     message: str
 
 
-def normalize_intent_text(value):
+def detect_ai_intent(
+    message: str
+):
+    text_message = message.lower().strip()
 
-    if not value:
-        return ""
-
-    value = value.lower().strip()
-
-    value = re.sub(
-        r"\s+",
-        " ",
-        value
-    )
-
-    return value
-
-
-def detect_ai_intent(message):
-
-    message = normalize_intent_text(
-        message
-    )
-
-    if not message:
-
-        return {
-            "intent": "LEARN",
-            "confidence": 0,
-            "reason": "Empty message"
-        }
-
-    # ========================================================
-    # RESEARCH SIGNALS
-    # ========================================================
-
-    research_phrases = [
-        "research paper",
-        "research papers",
-        "research article",
-        "research articles",
-        "academic paper",
-        "academic papers",
-        "scholarly paper",
-        "scholarly papers",
-        "journal paper",
-        "journal papers",
-        "latest research",
-        "recent research",
-        "research on",
-        "papers on",
-        "papers about",
-        "paper on",
-        "paper about",
-        "find papers",
-        "find research",
-        "literature review",
-        "related papers",
-        "related research"
-    ]
-
-    research_words = [
+    research_keywords = [
         "research",
-        "papers",
         "paper",
+        "papers",
+        "journal",
+        "study",
+        "studies",
+        "latest research",
         "literature",
-        "scholarly",
-        "academic"
+        "citation",
+        "citation paper",
+        "academic paper"
     ]
 
-    # ========================================================
-    # LEARNING SIGNALS
-    # ========================================================
-
-    learning_phrases = [
-        "what is",
-        "what are",
-        "explain",
-        "teach me",
-        "help me understand",
-        "how does",
-        "how do",
-        "why does",
-        "why do",
-        "meaning of",
-        "define",
-        "definition of",
-        "simplify",
-        "in simple words",
-        "easy explanation",
-        "example of",
-        "examples of",
-        "difference between",
-        "compare",
-        "how to learn",
-        "i don't understand",
-        "i dont understand",
-        "i am confused",
-        "im confused"
-    ]
-
-    learning_words = [
+    learning_keywords = [
         "explain",
         "teach",
-        "understand",
-        "meaning",
-        "define",
-        "definition",
-        "example",
-        "examples",
+        "learn",
+        "what is",
+        "how does",
+        "how do",
         "difference",
-        "simplify",
-        "learn"
+        "meaning",
+        "example",
+        "understand"
     ]
 
-    # ========================================================
-    # DETECT SIGNALS
-    # ========================================================
-
-    has_research_phrase = any(
-        phrase in message
-        for phrase in research_phrases
+    research_match = any(
+        keyword in text_message
+        for keyword in research_keywords
     )
 
-    has_research_word = any(
-        re.search(
-            rf"\b{re.escape(word)}\b",
-            message
-        )
-        for word in research_words
+    learning_match = any(
+        keyword in text_message
+        for keyword in learning_keywords
     )
 
-    has_learning_phrase = any(
-        phrase in message
-        for phrase in learning_phrases
-    )
+    if research_match and learning_match:
+        intent = "BOTH"
 
-    has_learning_word = any(
-        re.search(
-            rf"\b{re.escape(word)}\b",
-            message
-        )
-        for word in learning_words
-    )
+    elif research_match:
+        intent = "RESEARCH"
 
-    has_research_signal = (
-        has_research_phrase
-        or has_research_word
-    )
+    else:
+        intent = "LEARN"
 
-    has_learning_signal = (
-        has_learning_phrase
-        or has_learning_word
-    )
+    return intent
 
-    # ========================================================
-    # BOTH
-    # ========================================================
-
-    if (
-        has_research_signal
-        and has_learning_signal
-    ):
-
-        return {
-            "intent": "BOTH",
-            "confidence": 0.95,
-            "reason": (
-                "The message contains both learning "
-                "and research signals."
-            )
-        }
-
-    # ========================================================
-    # RESEARCH
-    # ========================================================
-
-    if has_research_signal:
-
-        return {
-            "intent": "RESEARCH",
-            "confidence": 0.90,
-            "reason": (
-                "The message contains research-oriented "
-                "language."
-            )
-        }
-
-    # ========================================================
-    # LEARN
-    # ========================================================
-
-    if has_learning_signal:
-
-        return {
-            "intent": "LEARN",
-            "confidence": 0.90,
-            "reason": (
-                "The message contains learning-oriented "
-                "language."
-            )
-        }
-
-    # ========================================================
-    # DEFAULT
-    # ========================================================
-
-    return {
-        "intent": "LEARN",
-        "confidence": 0.60,
-        "reason": (
-            "No strong research signal was detected, "
-            "so StudentOS defaults to learning mode."
-        )
-    }
-
-
-# ============================================================
-# AI INTENT API
-# ============================================================
 
 @app.post("/ai/intent")
-def detect_intent(
+def ai_intent(
     request: AIIntentRequest
 ):
-
-    message = request.message.strip()
-
-    if not message:
-
-        raise HTTPException(
-            status_code=400,
-            detail="Message cannot be empty"
-        )
-
-    result = detect_ai_intent(
-        message
+    intent = detect_ai_intent(
+        request.message
     )
 
     return {
-        "message": message,
-        **result
+        "message": request.message,
+        "intent": intent
     }
 
 
 # ============================================================
-# SERVER
+# START SERVER
 # ============================================================
 
 if __name__ == "__main__":
-
     import uvicorn
 
     uvicorn.run(

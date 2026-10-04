@@ -1,6 +1,11 @@
 import "./App.css";
 
 import {
+  useEffect,
+  useState,
+} from "react";
+
+import {
   LayoutDashboard,
   BookOpen,
   CheckSquare,
@@ -264,6 +269,104 @@ function Topbar() {
 
 function Dashboard() {
 
+  const [academicProgress, setAcademicProgress] = useState(0);
+
+  const [progressLoading, setProgressLoading] =
+    useState(true);
+
+
+  useEffect(() => {
+
+    let isMounted = true;
+
+
+    async function loadProgress() {
+
+      try {
+
+        setProgressLoading(true);
+
+
+        const response = await fetch(
+          "http://127.0.0.1:8000/progress"
+        );
+
+
+        if (!response.ok) {
+
+          throw new Error(
+            "Failed to load academic progress."
+          );
+
+        }
+
+
+        const data = await response.json();
+
+
+        const progress = Number(
+          data?.progress ?? 0
+        );
+
+
+        const safeProgress = Math.min(
+          100,
+          Math.max(
+            0,
+            Number.isFinite(progress)
+              ? progress
+              : 0
+          )
+        );
+
+
+        if (isMounted) {
+
+          setAcademicProgress(
+            safeProgress
+          );
+
+        }
+
+      } catch (error) {
+
+        console.error(
+          "Error loading dashboard progress:",
+          error
+        );
+
+
+        if (isMounted) {
+
+          setAcademicProgress(0);
+
+        }
+
+      } finally {
+
+        if (isMounted) {
+
+          setProgressLoading(false);
+
+        }
+
+      }
+
+    }
+
+
+    loadProgress();
+
+
+    return () => {
+
+      isMounted = false;
+
+    };
+
+  }, []);
+
+
   return (
 
     <section className="dashboard-content">
@@ -300,6 +403,7 @@ function Dashboard() {
 
       <div className="dashboard-grid">
 
+
         <div className="dashboard-card focus-card">
 
           <span className="card-label">
@@ -322,27 +426,41 @@ function Dashboard() {
         </div>
 
 
+
         <div className="dashboard-card progress-card">
 
           <span className="card-label">
             ACADEMIC PROGRESS
           </span>
 
+
           <div className="progress-number">
-            72%
+
+            {progressLoading
+              ? "—"
+              : `${academicProgress}%`}
+
           </div>
 
+
           <p>
-            Overall semester progress
+            Overall academic progress
           </p>
+
 
           <div className="progress-track">
 
-            <div className="progress-fill"></div>
+            <div
+              className="progress-fill"
+              style={{
+                width: `${academicProgress}%`,
+              }}
+            ></div>
 
           </div>
 
         </div>
+
 
 
         <div className="dashboard-card">
@@ -366,6 +484,7 @@ function Dashboard() {
         </div>
 
 
+
         <div className="dashboard-card ai-card">
 
           <span className="card-label">
@@ -386,6 +505,7 @@ function Dashboard() {
           </span>
 
         </div>
+
 
       </div>
 
@@ -415,40 +535,48 @@ function App() {
             element={<Dashboard />}
           />
 
+
           <Route
             path="/subjects"
             element={<Subjects />}
           />
+
 
           <Route
             path="/subjects/:subjectId"
             element={<SubjectDetails />}
           />
 
+
           <Route
             path="/syllabus"
             element={<Syllabus />}
           />
+
 
           <Route
             path="/tasks"
             element={<Tasks />}
           />
 
+
           <Route
             path="/planner"
             element={<StudyPlanner />}
           />
+
 
           <Route
             path="/ai"
             element={<AIAssistant />}
           />
 
+
           <Route
             path="/analytics"
             element={<Analytics />}
           />
+
 
           <Route
             path="/settings"
