@@ -1,31 +1,18 @@
-from datetime import datetime, date
-from io import BytesIO
-
-from fastapi import (
-    FastAPI,
-    HTTPException,
-    UploadFile,
-    File,
-    Form,
-)
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
 from sqlalchemy import text
+from sqlalchemy.orm import Session
+from pydantic import BaseModel
+from datetime import datetime
+from typing import Optional
+from database import get_db
+import os
+import re
+import httpx
 from pypdf import PdfReader
 
-from database import engine
-from syllabus_parser import parse_syllabus
 
-
-# ============================================================
-# APP SETUP
-# ============================================================
-
-app = FastAPI(
-    title="StudentOS API",
-    description="Backend API for StudentOS",
-    version="1.0.0",
-)
+app = FastAPI(title="StudentOS API")
 
 
 # ============================================================
@@ -34,10 +21,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ],
+    allow_origins=["http://localhost:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -45,99 +29,41 @@ app.add_middleware(
 
 
 # ============================================================
-# PYDANTIC MODELS
+# BASIC ROUTES
 # ============================================================
 
-# -------------------------
-# SUBJECT
-# -------------------------
+@app.get("/")
+def root():
+    return {
+        "message": "StudentOS Backend is running 🚀"
+    }
+
+
+@app.get("/health")
+def health():
+    return {
+        "status": "ok"
+    }
+
+
+# ============================================================
+# SUBJECT MODELS
+# ============================================================
 
 class SubjectCreate(BaseModel):
     name: str
     short_name: str
-    progress: int = 0
-    topics: int = 0
-    assignments: int = 0
-    color: str = "blue"
-
-
-# -------------------------
-# TASK
-# -------------------------
-
-class TaskCreate(BaseModel):
-    title: str
-    description: str | None = None
-    subject_id: int
-    due_date: str | None = None
-    priority: str = "Medium"
-    status: str = "Pending"
-
-
-# -------------------------
-# STUDY SESSION
-# -------------------------
-
-class StudySessionCreate(BaseModel):
-    subject_id: int
-    start_time: str
-    end_time: str | None = None
-    duration_minutes: int = 0
-    topic: str | None = None
-    notes: str | None = None
-
-
-# -------------------------
-# SYLLABUS UNIT
-# -------------------------
-
-class SyllabusUnitCreate(BaseModel):
-    subject_id: int
-    unit_number: int
-    unit_name: str
-
-
-# -------------------------
-# SYLLABUS TOPIC
-# -------------------------
-
-class SyllabusTopicCreate(BaseModel):
-    unit_id: int
-    topic_name: str
-    status: str = "Not Started"
-    mastery: int = 0
-
-
-# -------------------------
-# UPDATE SYLLABUS TOPIC
-# -------------------------
-
-class SyllabusTopicUpdate(BaseModel):
-    topic_name: str | None = None
-    status: str | None = None
-    mastery: int | None = None
+    color: Optional[str] = "#3B82F6"
+    topics: Optional[int] = 0
+    assignments: Optional[int] = 0
+    progress: Optional[int] = 0
 
 
 # ============================================================
-# PROGRESS HELPER
+# AUTOMATIC SUBJECT PROGRESS
 # ============================================================
 
-def calculate_subject_progress(
-    connection,
-    subject_id: int,
-):
-    """
-    Calculate subject progress from the actual syllabus.
-
-    Progress is based on the percentage of syllabus topics
-    whose status is 'Completed'.
-
-    Example:
-        20 completed topics
-        41 total topics
-
-        Progress = 20 / 41 * 100
-    """
+def calculate_subject_progress(connection, subject_id):
 
     result = connection.execute(
         text("""
@@ -145,1755 +71,1402 @@ def calculate_subject_progress(
                 COUNT(st.id) AS total_topics,
                 COUNT(
                     CASE
-                        WHEN st.status = 'Completed'
+                        WHEN LOWER(st.status) = 'completed'
                         THEN 1
                     END
                 ) AS completed_topics
             FROM syllabus_units su
             LEFT JOIN syllabus_topics st
-                ON su.id = st.unit_id
+                ON st.unit_id = su.id
             WHERE su.subject_id = :subject_id
         """),
         {
-            "subject_id": subject_id,
-        },
-    )
-
-    row = result.fetchone()
-
-    if not row:
-        return {
-            "progress": 0,
-            "total_topics": 0,
-            "completed_topics": 0,
+            "subject_id": subject_id
         }
+    ).fetchone()
 
-    total_topics = row.total_topics or 0
-    completed_topics = row.completed_topics or 0
+    total_topics = int(result.total_topics or 0)
+    completed_topics = int(result.completed_topics or 0)
 
     if total_topics == 0:
-        progress = 0
-    else:
-        progress = round(
-            (completed_topics / total_topics) * 100
-        )
+        return 0
 
-    return {
-        "progress": progress,
-        "total_topics": total_topics,
-        "completed_topics": completed_topics,
-    }
+    return round(
+        completed_topics / total_topics * 100
+    )
 
 
 # ============================================================
-# ROOT
-# ============================================================
-
-@app.get("/")
-def root():
-    return {
-        "message": "StudentOS API is running 🚀",
-        "status": "success",
-    }
-
-
-# ============================================================
-# SUBJECT APIs
+# SUBJECTS
 # ============================================================
 
 @app.get("/subjects")
-def get_subjects():
+def get_subjects(db: Session = Depends(get_db)):
 
-    with engine.connect() as connection:
+    query = text("""
+        SELECT
+            s.id,
+            s.name,
+            s.short_name,
+            s.color,
+            s.topics AS stored_topics,
+            s.assignments,
+            s.progress AS stored_progress,
 
-        result = connection.execute(
-            text("""
-                SELECT
-                    s.id,
-                    s.name,
-                    s.short_name,
-                    s.progress AS stored_progress,
-                    s.topics AS stored_topics,
-                    s.assignments,
-                    s.color,
+            COUNT(DISTINCT st.id) AS syllabus_topics,
 
-                    COUNT(st.id) AS syllabus_topics,
+            COUNT(
+                DISTINCT CASE
+                    WHEN LOWER(st.status) = 'completed'
+                    THEN st.id
+                END
+            ) AS completed_topics
 
-                    COUNT(
-                        CASE
-                            WHEN st.status = 'Completed'
-                            THEN 1
-                        END
-                    ) AS completed_topics
+        FROM subjects s
 
-                FROM subjects s
+        LEFT JOIN syllabus_units su
+            ON su.subject_id = s.id
 
-                LEFT JOIN syllabus_units su
-                    ON s.id = su.subject_id
+        LEFT JOIN syllabus_topics st
+            ON st.unit_id = su.id
 
-                LEFT JOIN syllabus_topics st
-                    ON su.id = st.unit_id
+        GROUP BY
+            s.id,
+            s.name,
+            s.short_name,
+            s.color,
+            s.topics,
+            s.assignments,
+            s.progress
 
-                GROUP BY
-                    s.id,
-                    s.name,
-                    s.short_name,
-                    s.progress,
-                    s.topics,
-                    s.assignments,
-                    s.color
+        ORDER BY s.id
+    """)
 
-                ORDER BY s.id
-            """)
-        )
+    rows = db.execute(query).mappings().all()
 
-        subjects = []
+    subjects = []
 
-        for row in result:
+    for row in rows:
 
-            data = dict(row._mapping)
+        syllabus_topics = int(row["syllabus_topics"] or 0)
+        completed_topics = int(row["completed_topics"] or 0)
 
-            total_topics = data["syllabus_topics"] or 0
-            completed_topics = data["completed_topics"] or 0
+        if syllabus_topics > 0:
 
-            if total_topics > 0:
-                calculated_progress = round(
-                    (completed_topics / total_topics) * 100
-                )
-            else:
-                calculated_progress = 0
-
-            subjects.append(
-                {
-                    "id": data["id"],
-                    "name": data["name"],
-                    "short_name": data["short_name"],
-
-                    # Automatically calculated from syllabus.
-                    "progress": calculated_progress,
-
-                    # Use actual syllabus topic count
-                    # when syllabus data exists.
-                    "topics": (
-                        total_topics
-                        if total_topics > 0
-                        else data["stored_topics"]
-                    ),
-
-                    "assignments": data["assignments"],
-                    "color": data["color"],
-
-                    # Extra information useful for
-                    # future analytics.
-                    "completed_topics": completed_topics,
-                    "syllabus_topics": total_topics,
-                }
+            progress = round(
+                completed_topics / syllabus_topics * 100
             )
 
-        return subjects
+            topics = syllabus_topics
+
+        else:
+
+            progress = row["stored_progress"] or 0
+            topics = row["stored_topics"] or 0
+
+        subjects.append({
+            "id": row["id"],
+            "name": row["name"],
+            "short_name": row["short_name"],
+            "color": row["color"],
+            "topics": topics,
+            "assignments": row["assignments"] or 0,
+            "progress": progress,
+            "completed_topics": completed_topics,
+            "syllabus_topics": syllabus_topics
+        })
+
+    return subjects
 
 
 @app.get("/subjects/{subject_id}")
-def get_subject(subject_id: int):
+def get_subject(
+    subject_id: int,
+    db: Session = Depends(get_db)
+):
 
-    with engine.connect() as connection:
+    query = text("""
+        SELECT
+            s.id,
+            s.name,
+            s.short_name,
+            s.color,
+            s.topics AS stored_topics,
+            s.assignments,
+            s.progress AS stored_progress,
 
-        result = connection.execute(
-            text("""
-                SELECT
-                    s.id,
-                    s.name,
-                    s.short_name,
-                    s.progress AS stored_progress,
-                    s.topics AS stored_topics,
-                    s.assignments,
-                    s.color,
+            COUNT(DISTINCT st.id) AS syllabus_topics,
 
-                    COUNT(st.id) AS syllabus_topics,
+            COUNT(
+                DISTINCT CASE
+                    WHEN LOWER(st.status) = 'completed'
+                    THEN st.id
+                END
+            ) AS completed_topics
 
-                    COUNT(
-                        CASE
-                            WHEN st.status = 'Completed'
-                            THEN 1
-                        END
-                    ) AS completed_topics
+        FROM subjects s
 
-                FROM subjects s
+        LEFT JOIN syllabus_units su
+            ON su.subject_id = s.id
 
-                LEFT JOIN syllabus_units su
-                    ON s.id = su.subject_id
+        LEFT JOIN syllabus_topics st
+            ON st.unit_id = su.id
 
-                LEFT JOIN syllabus_topics st
-                    ON su.id = st.unit_id
+        WHERE s.id = :subject_id
 
-                WHERE s.id = :subject_id
+        GROUP BY
+            s.id,
+            s.name,
+            s.short_name,
+            s.color,
+            s.topics,
+            s.assignments,
+            s.progress
+    """)
 
-                GROUP BY
-                    s.id,
-                    s.name,
-                    s.short_name,
-                    s.progress,
-                    s.topics,
-                    s.assignments,
-                    s.color
-            """),
-            {
-                "subject_id": subject_id
-            },
+    row = db.execute(
+        query,
+        {
+            "subject_id": subject_id
+        }
+    ).mappings().first()
+
+    if not row:
+
+        raise HTTPException(
+            status_code=404,
+            detail="Subject not found"
         )
 
-        row = result.fetchone()
+    syllabus_topics = int(row["syllabus_topics"] or 0)
+    completed_topics = int(row["completed_topics"] or 0)
 
-        if not row:
-            raise HTTPException(
-                status_code=404,
-                detail="Subject not found"
-            )
+    if syllabus_topics > 0:
 
-        data = dict(row._mapping)
+        progress = round(
+            completed_topics / syllabus_topics * 100
+        )
 
-        total_topics = data["syllabus_topics"] or 0
-        completed_topics = data["completed_topics"] or 0
+        topics = syllabus_topics
 
-        if total_topics > 0:
-            calculated_progress = round(
-                (completed_topics / total_topics) * 100
-            )
-        else:
-            calculated_progress = 0
+    else:
 
-        return {
-            "id": data["id"],
-            "name": data["name"],
-            "short_name": data["short_name"],
-            "progress": calculated_progress,
-            "topics": (
-                total_topics
-                if total_topics > 0
-                else data["stored_topics"]
-            ),
-            "assignments": data["assignments"],
-            "color": data["color"],
-            "completed_topics": completed_topics,
-            "syllabus_topics": total_topics,
-        }
+        progress = row["stored_progress"] or 0
+        topics = row["stored_topics"] or 0
+
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "short_name": row["short_name"],
+        "color": row["color"],
+        "topics": topics,
+        "assignments": row["assignments"] or 0,
+        "progress": progress,
+        "completed_topics": completed_topics,
+        "syllabus_topics": syllabus_topics
+    }
 
 
 @app.post("/subjects")
-def create_subject(subject: SubjectCreate):
+def create_subject(
+    subject: SubjectCreate,
+    db: Session = Depends(get_db)
+):
 
-    with engine.begin() as connection:
-
-        result = connection.execute(
-            text("""
-                INSERT INTO subjects (
-                    name,
-                    short_name,
-                    progress,
-                    topics,
-                    assignments,
-                    color
-                )
-                VALUES (
-                    :name,
-                    :short_name,
-                    :progress,
-                    :topics,
-                    :assignments,
-                    :color
-                )
-                RETURNING
-                    id,
-                    name,
-                    short_name,
-                    progress,
-                    topics,
-                    assignments,
-                    color
-            """),
-            subject.model_dump(),
+    query = text("""
+        INSERT INTO subjects
+        (
+            name,
+            short_name,
+            color,
+            topics,
+            assignments,
+            progress
         )
+        VALUES
+        (
+            :name,
+            :short_name,
+            :color,
+            :topics,
+            :assignments,
+            :progress
+        )
+        RETURNING
+            id,
+            name,
+            short_name,
+            color,
+            topics,
+            assignments,
+            progress
+    """)
 
-        row = result.fetchone()
+    row = db.execute(
+        query,
+        subject.model_dump()
+    ).mappings().first()
 
-        return dict(row._mapping)
+    db.commit()
+
+    return dict(row)
 
 
 @app.put("/subjects/{subject_id}")
 def update_subject(
     subject_id: int,
-    subject: SubjectCreate
+    subject: SubjectCreate,
+    db: Session = Depends(get_db)
 ):
 
-    with engine.begin() as connection:
+    query = text("""
+        UPDATE subjects
+        SET
+            name = :name,
+            short_name = :short_name,
+            color = :color
+        WHERE id = :subject_id
+        RETURNING
+            id,
+            name,
+            short_name,
+            color,
+            topics,
+            assignments,
+            progress
+    """)
 
-        result = connection.execute(
-            text("""
-                UPDATE subjects
-                SET
-                    name = :name,
-                    short_name = :short_name,
-                    progress = :progress,
-                    topics = :topics,
-                    assignments = :assignments,
-                    color = :color
-                WHERE id = :subject_id
-                RETURNING
-                    id,
-                    name,
-                    short_name,
-                    progress,
-                    topics,
-                    assignments,
-                    color
-            """),
-            {
-                **subject.model_dump(),
-                "subject_id": subject_id,
-            },
+    row = db.execute(
+        query,
+        {
+            "subject_id": subject_id,
+            "name": subject.name,
+            "short_name": subject.short_name,
+            "color": subject.color
+        }
+    ).mappings().first()
+
+    if not row:
+
+        raise HTTPException(
+            status_code=404,
+            detail="Subject not found"
         )
 
-        row = result.fetchone()
+    db.commit()
 
-        if not row:
-            raise HTTPException(
-                status_code=404,
-                detail="Subject not found"
-            )
-
-        return dict(row._mapping)
+    return dict(row)
 
 
 @app.delete("/subjects/{subject_id}")
-def delete_subject(subject_id: int):
+def delete_subject(
+    subject_id: int,
+    db: Session = Depends(get_db)
+):
 
-    with engine.begin() as connection:
+    result = db.execute(
+        text("""
+            DELETE FROM subjects
+            WHERE id = :subject_id
+        """),
+        {
+            "subject_id": subject_id
+        }
+    )
 
-        result = connection.execute(
-            text("""
-                DELETE FROM subjects
-                WHERE id = :subject_id
-                RETURNING id
-            """),
-            {
-                "subject_id": subject_id
-            },
+    if result.rowcount == 0:
+
+        raise HTTPException(
+            status_code=404,
+            detail="Subject not found"
         )
 
-        row = result.fetchone()
+    db.commit()
 
-        if not row:
-            raise HTTPException(
-                status_code=404,
-                detail="Subject not found"
-            )
-
-        return {
-            "message": "Subject deleted successfully",
-            "id": subject_id,
-        }
+    return {
+        "message": "Subject deleted successfully"
+    }
 
 
 # ============================================================
-# TASK APIs
+# TASK MODELS
+# ============================================================
+
+class TaskCreate(BaseModel):
+    title: str
+    description: Optional[str] = None
+    subject_id: int
+    due_date: Optional[str] = None
+    priority: Optional[str] = "Medium"
+    status: Optional[str] = "Pending"
+
+
+# ============================================================
+# TASKS
 # ============================================================
 
 @app.get("/tasks")
-def get_tasks():
+def get_tasks(db: Session = Depends(get_db)):
 
-    with engine.connect() as connection:
+    query = text("""
+        SELECT
+            t.id,
+            t.title,
+            t.description,
+            t.subject_id,
+            s.name AS subject_name,
+            s.short_name AS subject_short_name,
+            t.due_date,
+            t.priority,
+            t.status,
+            t.created_at
+        FROM tasks t
+        JOIN subjects s
+            ON t.subject_id = s.id
+        ORDER BY
+            t.due_date NULLS LAST,
+            t.id DESC
+    """)
 
-        result = connection.execute(
-            text("""
-                SELECT
-                    t.id,
-                    t.title,
-                    t.description,
-                    t.subject_id,
-                    s.name AS subject_name,
-                    s.short_name AS subject_short_name,
-                    t.due_date,
-                    t.priority,
-                    t.status,
-                    t.created_at
-                FROM tasks t
-                JOIN subjects s
-                    ON t.subject_id = s.id
-                ORDER BY
-                    t.due_date NULLS LAST,
-                    t.id DESC
-            """)
-        )
+    rows = db.execute(query).mappings().all()
 
-        tasks = []
-
-        for row in result:
-
-            task = dict(row._mapping)
-
-            if isinstance(task.get("due_date"), date):
-                task["due_date"] = task["due_date"].isoformat()
-
-            if isinstance(task.get("created_at"), datetime):
-                task["created_at"] = task["created_at"].isoformat()
-
-            tasks.append(task)
-
-        return tasks
+    return [dict(row) for row in rows]
 
 
 @app.get("/tasks/{task_id}")
-def get_task(task_id: int):
+def get_task(
+    task_id: int,
+    db: Session = Depends(get_db)
+):
 
-    with engine.connect() as connection:
+    query = text("""
+        SELECT
+            t.id,
+            t.title,
+            t.description,
+            t.subject_id,
+            s.name AS subject_name,
+            s.short_name AS subject_short_name,
+            t.due_date,
+            t.priority,
+            t.status,
+            t.created_at
+        FROM tasks t
+        JOIN subjects s
+            ON t.subject_id = s.id
+        WHERE t.id = :task_id
+    """)
 
-        result = connection.execute(
-            text("""
-                SELECT
-                    t.id,
-                    t.title,
-                    t.description,
-                    t.subject_id,
-                    s.name AS subject_name,
-                    s.short_name AS subject_short_name,
-                    t.due_date,
-                    t.priority,
-                    t.status,
-                    t.created_at
-                FROM tasks t
-                JOIN subjects s
-                    ON t.subject_id = s.id
-                WHERE t.id = :task_id
-            """),
-            {
-                "task_id": task_id
-            },
+    row = db.execute(
+        query,
+        {
+            "task_id": task_id
+        }
+    ).mappings().first()
+
+    if not row:
+
+        raise HTTPException(
+            status_code=404,
+            detail="Task not found"
         )
 
-        row = result.fetchone()
-
-        if not row:
-            raise HTTPException(
-                status_code=404,
-                detail="Task not found"
-            )
-
-        task = dict(row._mapping)
-
-        if isinstance(task.get("due_date"), date):
-            task["due_date"] = task["due_date"].isoformat()
-
-        if isinstance(task.get("created_at"), datetime):
-            task["created_at"] = task["created_at"].isoformat()
-
-        return task
+    return dict(row)
 
 
 @app.post("/tasks")
-def create_task(task: TaskCreate):
+def create_task(
+    task: TaskCreate,
+    db: Session = Depends(get_db)
+):
 
-    with engine.begin() as connection:
-
-        subject_result = connection.execute(
-            text("""
-                SELECT id
-                FROM subjects
-                WHERE id = :subject_id
-            """),
-            {
-                "subject_id": task.subject_id
-            },
+    query = text("""
+        INSERT INTO tasks
+        (
+            title,
+            description,
+            subject_id,
+            due_date,
+            priority,
+            status
         )
-
-        if not subject_result.fetchone():
-            raise HTTPException(
-                status_code=404,
-                detail="Subject not found"
-            )
-
-        result = connection.execute(
-            text("""
-                INSERT INTO tasks (
-                    title,
-                    description,
-                    subject_id,
-                    due_date,
-                    priority,
-                    status
-                )
-                VALUES (
-                    :title,
-                    :description,
-                    :subject_id,
-                    :due_date,
-                    :priority,
-                    :status
-                )
-                RETURNING
-                    id,
-                    title,
-                    description,
-                    subject_id,
-                    due_date,
-                    priority,
-                    status,
-                    created_at
-            """),
-            task.model_dump(),
+        VALUES
+        (
+            :title,
+            :description,
+            :subject_id,
+            :due_date,
+            :priority,
+            :status
         )
+        RETURNING
+            id,
+            title,
+            description,
+            subject_id,
+            due_date,
+            priority,
+            status,
+            created_at
+    """)
 
-        row = result.fetchone()
+    row = db.execute(
+        query,
+        task.model_dump()
+    ).mappings().first()
 
-        task_data = dict(row._mapping)
+    db.commit()
 
-        if isinstance(task_data.get("due_date"), date):
-            task_data["due_date"] = task_data["due_date"].isoformat()
-
-        if isinstance(task_data.get("created_at"), datetime):
-            task_data["created_at"] = task_data["created_at"].isoformat()
-
-        return task_data
+    return dict(row)
 
 
 @app.put("/tasks/{task_id}")
 def update_task(
     task_id: int,
-    task: TaskCreate
+    task: TaskCreate,
+    db: Session = Depends(get_db)
 ):
 
-    with engine.begin() as connection:
+    query = text("""
+        UPDATE tasks
+        SET
+            title = :title,
+            description = :description,
+            subject_id = :subject_id,
+            due_date = :due_date,
+            priority = :priority,
+            status = :status
+        WHERE id = :task_id
+        RETURNING
+            id,
+            title,
+            description,
+            subject_id,
+            due_date,
+            priority,
+            status,
+            created_at
+    """)
 
-        result = connection.execute(
-            text("""
-                UPDATE tasks
-                SET
-                    title = :title,
-                    description = :description,
-                    subject_id = :subject_id,
-                    due_date = :due_date,
-                    priority = :priority,
-                    status = :status
-                WHERE id = :task_id
-                RETURNING
-                    id,
-                    title,
-                    description,
-                    subject_id,
-                    due_date,
-                    priority,
-                    status,
-                    created_at
-            """),
-            {
-                **task.model_dump(),
-                "task_id": task_id,
-            },
+    row = db.execute(
+        query,
+        {
+            "task_id": task_id,
+            **task.model_dump()
+        }
+    ).mappings().first()
+
+    if not row:
+
+        raise HTTPException(
+            status_code=404,
+            detail="Task not found"
         )
 
-        row = result.fetchone()
+    db.commit()
 
-        if not row:
-            raise HTTPException(
-                status_code=404,
-                detail="Task not found"
-            )
-
-        task_data = dict(row._mapping)
-
-        if isinstance(task_data.get("due_date"), date):
-            task_data["due_date"] = task_data["due_date"].isoformat()
-
-        if isinstance(task_data.get("created_at"), datetime):
-            task_data["created_at"] = task_data["created_at"].isoformat()
-
-        return task_data
+    return dict(row)
 
 
 @app.delete("/tasks/{task_id}")
-def delete_task(task_id: int):
+def delete_task(
+    task_id: int,
+    db: Session = Depends(get_db)
+):
 
-    with engine.begin() as connection:
+    result = db.execute(
+        text("""
+            DELETE FROM tasks
+            WHERE id = :task_id
+        """),
+        {
+            "task_id": task_id
+        }
+    )
 
-        result = connection.execute(
-            text("""
-                DELETE FROM tasks
-                WHERE id = :task_id
-                RETURNING id
-            """),
-            {
-                "task_id": task_id
-            },
+    if result.rowcount == 0:
+
+        raise HTTPException(
+            status_code=404,
+            detail="Task not found"
         )
 
-        row = result.fetchone()
+    db.commit()
 
-        if not row:
-            raise HTTPException(
-                status_code=404,
-                detail="Task not found"
-            )
-
-        return {
-            "message": "Task deleted successfully",
-            "id": task_id,
-        }
+    return {
+        "message": "Task deleted successfully"
+    }
 
 
 # ============================================================
-# STUDY SESSION APIs
+# STUDY SESSION MODELS
+# ============================================================
+
+class StudySessionCreate(BaseModel):
+    subject_id: int
+    start_time: datetime
+    end_time: Optional[datetime] = None
+    duration_minutes: Optional[int] = 0
+    topic: Optional[str] = None
+    notes: Optional[str] = None
+
+
+# ============================================================
+# STUDY SESSIONS
 # ============================================================
 
 @app.get("/study-sessions")
-def get_study_sessions():
+def get_study_sessions(
+    db: Session = Depends(get_db)
+):
 
-    with engine.connect() as connection:
+    query = text("""
+        SELECT
+            ss.id,
+            ss.subject_id,
+            s.name AS subject_name,
+            s.short_name AS subject_short_name,
+            ss.start_time,
+            ss.end_time,
+            ss.duration_minutes,
+            ss.topic,
+            ss.notes,
+            ss.created_at
+        FROM study_sessions ss
+        JOIN subjects s
+            ON ss.subject_id = s.id
+        ORDER BY
+            ss.start_time DESC
+    """)
 
-        result = connection.execute(
-            text("""
-                SELECT
-                    ss.id,
-                    ss.subject_id,
-                    s.name AS subject_name,
-                    s.short_name AS subject_short_name,
-                    ss.start_time,
-                    ss.end_time,
-                    ss.duration_minutes,
-                    ss.topic,
-                    ss.notes,
-                    ss.created_at
-                FROM study_sessions ss
-                JOIN subjects s
-                    ON ss.subject_id = s.id
-                ORDER BY ss.start_time DESC
-            """)
-        )
+    rows = db.execute(query).mappings().all()
 
-        sessions = []
-
-        for row in result:
-
-            session = dict(row._mapping)
-
-            if isinstance(session.get("start_time"), datetime):
-                session["start_time"] = session["start_time"].isoformat()
-
-            if isinstance(session.get("end_time"), datetime):
-                session["end_time"] = session["end_time"].isoformat()
-
-            if isinstance(session.get("created_at"), datetime):
-                session["created_at"] = session["created_at"].isoformat()
-
-            sessions.append(session)
-
-        return sessions
+    return [dict(row) for row in rows]
 
 
 @app.get("/study-sessions/{session_id}")
-def get_study_session(session_id: int):
+def get_study_session(
+    session_id: int,
+    db: Session = Depends(get_db)
+):
 
-    with engine.connect() as connection:
+    query = text("""
+        SELECT
+            ss.id,
+            ss.subject_id,
+            s.name AS subject_name,
+            s.short_name AS subject_short_name,
+            ss.start_time,
+            ss.end_time,
+            ss.duration_minutes,
+            ss.topic,
+            ss.notes,
+            ss.created_at
+        FROM study_sessions ss
+        JOIN subjects s
+            ON ss.subject_id = s.id
+        WHERE ss.id = :session_id
+    """)
 
-        result = connection.execute(
-            text("""
-                SELECT
-                    ss.id,
-                    ss.subject_id,
-                    s.name AS subject_name,
-                    s.short_name AS subject_short_name,
-                    ss.start_time,
-                    ss.end_time,
-                    ss.duration_minutes,
-                    ss.topic,
-                    ss.notes,
-                    ss.created_at
-                FROM study_sessions ss
-                JOIN subjects s
-                    ON ss.subject_id = s.id
-                WHERE ss.id = :session_id
-            """),
-            {
-                "session_id": session_id
-            },
+    row = db.execute(
+        query,
+        {
+            "session_id": session_id
+        }
+    ).mappings().first()
+
+    if not row:
+
+        raise HTTPException(
+            status_code=404,
+            detail="Study session not found"
         )
 
-        row = result.fetchone()
-
-        if not row:
-            raise HTTPException(
-                status_code=404,
-                detail="Study session not found"
-            )
-
-        session = dict(row._mapping)
-
-        if isinstance(session.get("start_time"), datetime):
-            session["start_time"] = session["start_time"].isoformat()
-
-        if isinstance(session.get("end_time"), datetime):
-            session["end_time"] = session["end_time"].isoformat()
-
-        if isinstance(session.get("created_at"), datetime):
-            session["created_at"] = session["created_at"].isoformat()
-
-        return session
+    return dict(row)
 
 
 @app.post("/study-sessions")
 def create_study_session(
-    session: StudySessionCreate
+    session: StudySessionCreate,
+    db: Session = Depends(get_db)
 ):
 
-    with engine.begin() as connection:
-
-        subject_result = connection.execute(
-            text("""
-                SELECT id
-                FROM subjects
-                WHERE id = :subject_id
-            """),
-            {
-                "subject_id": session.subject_id
-            },
+    query = text("""
+        INSERT INTO study_sessions
+        (
+            subject_id,
+            start_time,
+            end_time,
+            duration_minutes,
+            topic,
+            notes
         )
-
-        if not subject_result.fetchone():
-            raise HTTPException(
-                status_code=404,
-                detail="Subject not found"
-            )
-
-        result = connection.execute(
-            text("""
-                INSERT INTO study_sessions (
-                    subject_id,
-                    start_time,
-                    end_time,
-                    duration_minutes,
-                    topic,
-                    notes
-                )
-                VALUES (
-                    :subject_id,
-                    :start_time,
-                    :end_time,
-                    :duration_minutes,
-                    :topic,
-                    :notes
-                )
-                RETURNING
-                    id,
-                    subject_id,
-                    start_time,
-                    end_time,
-                    duration_minutes,
-                    topic,
-                    notes,
-                    created_at
-            """),
-            session.model_dump(),
+        VALUES
+        (
+            :subject_id,
+            :start_time,
+            :end_time,
+            :duration_minutes,
+            :topic,
+            :notes
         )
+        RETURNING
+            id,
+            subject_id,
+            start_time,
+            end_time,
+            duration_minutes,
+            topic,
+            notes,
+            created_at
+    """)
 
-        row = result.fetchone()
+    row = db.execute(
+        query,
+        session.model_dump()
+    ).mappings().first()
 
-        session_data = dict(row._mapping)
+    db.commit()
 
-        if isinstance(session_data.get("start_time"), datetime):
-            session_data["start_time"] = session_data["start_time"].isoformat()
-
-        if isinstance(session_data.get("end_time"), datetime):
-            session_data["end_time"] = session_data["end_time"].isoformat()
-
-        if isinstance(session_data.get("created_at"), datetime):
-            session_data["created_at"] = session_data["created_at"].isoformat()
-
-        return session_data
+    return dict(row)
 
 
 @app.put("/study-sessions/{session_id}")
 def update_study_session(
     session_id: int,
-    session: StudySessionCreate
+    session: StudySessionCreate,
+    db: Session = Depends(get_db)
 ):
 
-    with engine.begin() as connection:
+    query = text("""
+        UPDATE study_sessions
+        SET
+            subject_id = :subject_id,
+            start_time = :start_time,
+            end_time = :end_time,
+            duration_minutes = :duration_minutes,
+            topic = :topic,
+            notes = :notes
+        WHERE id = :session_id
+        RETURNING
+            id,
+            subject_id,
+            start_time,
+            end_time,
+            duration_minutes,
+            topic,
+            notes,
+            created_at
+    """)
 
-        result = connection.execute(
-            text("""
-                UPDATE study_sessions
-                SET
-                    subject_id = :subject_id,
-                    start_time = :start_time,
-                    end_time = :end_time,
-                    duration_minutes = :duration_minutes,
-                    topic = :topic,
-                    notes = :notes
-                WHERE id = :session_id
-                RETURNING
-                    id,
-                    subject_id,
-                    start_time,
-                    end_time,
-                    duration_minutes,
-                    topic,
-                    notes,
-                    created_at
-            """),
-            {
-                **session.model_dump(),
-                "session_id": session_id,
-            },
+    row = db.execute(
+        query,
+        {
+            "session_id": session_id,
+            **session.model_dump()
+        }
+    ).mappings().first()
+
+    if not row:
+
+        raise HTTPException(
+            status_code=404,
+            detail="Study session not found"
         )
 
-        row = result.fetchone()
+    db.commit()
 
-        if not row:
-            raise HTTPException(
-                status_code=404,
-                detail="Study session not found"
-            )
-
-        session_data = dict(row._mapping)
-
-        if isinstance(session_data.get("start_time"), datetime):
-            session_data["start_time"] = session_data["start_time"].isoformat()
-
-        if isinstance(session_data.get("end_time"), datetime):
-            session_data["end_time"] = session_data["end_time"].isoformat()
-
-        if isinstance(session_data.get("created_at"), datetime):
-            session_data["created_at"] = session_data["created_at"].isoformat()
-
-        return session_data
+    return dict(row)
 
 
 @app.delete("/study-sessions/{session_id}")
-def delete_study_session(session_id: int):
-
-    with engine.begin() as connection:
-
-        result = connection.execute(
-            text("""
-                DELETE FROM study_sessions
-                WHERE id = :session_id
-                RETURNING id
-            """),
-            {
-                "session_id": session_id
-            },
-        )
-
-        row = result.fetchone()
-
-        if not row:
-            raise HTTPException(
-                status_code=404,
-                detail="Study session not found"
-            )
-
-        return {
-            "message": "Study session deleted successfully",
-            "id": session_id,
-        }
-
-
-# ============================================================
-# SYLLABUS APIs
-# ============================================================
-
-# ------------------------------------------------------------
-# GET ALL SYLLABUS DATA
-# ------------------------------------------------------------
-
-@app.get("/syllabus")
-def get_all_syllabus():
-
-    with engine.connect() as connection:
-
-        result = connection.execute(
-            text("""
-                SELECT
-                    su.id AS unit_id,
-                    su.subject_id,
-                    s.name AS subject_name,
-                    s.short_name AS subject_short_name,
-                    su.unit_number,
-                    su.unit_name,
-
-                    st.id AS topic_id,
-                    st.topic_name,
-                    st.status,
-                    st.mastery
-
-                FROM syllabus_units su
-
-                JOIN subjects s
-                    ON su.subject_id = s.id
-
-                LEFT JOIN syllabus_topics st
-                    ON su.id = st.unit_id
-
-                ORDER BY
-                    su.subject_id,
-                    su.unit_number,
-                    st.id
-            """)
-        )
-
-        rows = result.fetchall()
-
-        syllabus = {}
-
-        for row in rows:
-
-            data = dict(row._mapping)
-
-            subject_id = data["subject_id"]
-
-            if subject_id not in syllabus:
-
-                syllabus[subject_id] = {
-                    "subject_id": subject_id,
-                    "subject_name": data["subject_name"],
-                    "subject_short_name": data["subject_short_name"],
-                    "units": [],
-                }
-
-            subject = syllabus[subject_id]
-
-            unit = None
-
-            for existing_unit in subject["units"]:
-
-                if existing_unit["unit_id"] == data["unit_id"]:
-                    unit = existing_unit
-                    break
-
-            if unit is None:
-
-                unit = {
-                    "unit_id": data["unit_id"],
-                    "unit_number": data["unit_number"],
-                    "unit_name": data["unit_name"],
-                    "topics": [],
-                }
-
-                subject["units"].append(unit)
-
-            if data["topic_id"] is not None:
-
-                unit["topics"].append(
-                    {
-                        "topic_id": data["topic_id"],
-                        "topic_name": data["topic_name"],
-                        "status": data["status"],
-                        "mastery": data["mastery"],
-                    }
-                )
-
-        return list(syllabus.values())
-
-
-# ------------------------------------------------------------
-# GET SYLLABUS FOR ONE SUBJECT
-# ------------------------------------------------------------
-
-@app.get("/syllabus/{subject_id}")
-def get_subject_syllabus(subject_id: int):
-
-    with engine.connect() as connection:
-
-        subject_result = connection.execute(
-            text("""
-                SELECT
-                    id,
-                    name,
-                    short_name
-                FROM subjects
-                WHERE id = :subject_id
-            """),
-            {
-                "subject_id": subject_id
-            },
-        )
-
-        subject_row = subject_result.fetchone()
-
-        if not subject_row:
-            raise HTTPException(
-                status_code=404,
-                detail="Subject not found"
-            )
-
-        subject = dict(subject_row._mapping)
-
-        result = connection.execute(
-            text("""
-                SELECT
-                    su.id AS unit_id,
-                    su.unit_number,
-                    su.unit_name,
-
-                    st.id AS topic_id,
-                    st.topic_name,
-                    st.status,
-                    st.mastery
-
-                FROM syllabus_units su
-
-                LEFT JOIN syllabus_topics st
-                    ON su.id = st.unit_id
-
-                WHERE su.subject_id = :subject_id
-
-                ORDER BY
-                    su.unit_number,
-                    st.id
-            """),
-            {
-                "subject_id": subject_id
-            },
-        )
-
-        units = {}
-
-        for row in result:
-
-            data = dict(row._mapping)
-
-            unit_id = data["unit_id"]
-
-            if unit_id not in units:
-
-                units[unit_id] = {
-                    "unit_id": unit_id,
-                    "unit_number": data["unit_number"],
-                    "unit_name": data["unit_name"],
-                    "topics": [],
-                }
-
-            if data["topic_id"] is not None:
-
-                units[unit_id]["topics"].append(
-                    {
-                        "topic_id": data["topic_id"],
-                        "topic_name": data["topic_name"],
-                        "status": data["status"],
-                        "mastery": data["mastery"],
-                    }
-                )
-
-        return {
-            "subject_id": subject["id"],
-            "subject_name": subject["name"],
-            "subject_short_name": subject["short_name"],
-            "units": list(units.values()),
-        }
-
-
-# ------------------------------------------------------------
-# CREATE SYLLABUS UNIT
-# ------------------------------------------------------------
-
-@app.post("/syllabus/units")
-def create_syllabus_unit(
-    unit: SyllabusUnitCreate
+def delete_study_session(
+    session_id: int,
+    db: Session = Depends(get_db)
 ):
 
-    with engine.begin() as connection:
+    result = db.execute(
+        text("""
+            DELETE FROM study_sessions
+            WHERE id = :session_id
+        """),
+        {
+            "session_id": session_id
+        }
+    )
 
-        subject_result = connection.execute(
-            text("""
-                SELECT id
-                FROM subjects
-                WHERE id = :subject_id
-            """),
-            {
-                "subject_id": unit.subject_id
-            },
-        )
+    if result.rowcount == 0:
 
-        if not subject_result.fetchone():
-            raise HTTPException(
-                status_code=404,
-                detail="Subject not found"
-            )
-
-        result = connection.execute(
-            text("""
-                INSERT INTO syllabus_units (
-                    subject_id,
-                    unit_number,
-                    unit_name
-                )
-                VALUES (
-                    :subject_id,
-                    :unit_number,
-                    :unit_name
-                )
-                RETURNING
-                    id,
-                    subject_id,
-                    unit_number,
-                    unit_name,
-                    created_at
-            """),
-            unit.model_dump(),
-        )
-
-        row = result.fetchone()
-
-        data = dict(row._mapping)
-
-        if isinstance(data.get("created_at"), datetime):
-            data["created_at"] = data["created_at"].isoformat()
-
-        return data
-
-
-# ------------------------------------------------------------
-# CREATE SYLLABUS TOPIC
-# ------------------------------------------------------------
-
-@app.post("/syllabus/topics")
-def create_syllabus_topic(
-    topic: SyllabusTopicCreate
-):
-
-    if topic.mastery < 0 or topic.mastery > 100:
         raise HTTPException(
-            status_code=400,
-            detail="Mastery must be between 0 and 100"
+            status_code=404,
+            detail="Study session not found"
         )
 
-    with engine.begin() as connection:
+    db.commit()
 
-        unit_result = connection.execute(
-            text("""
-                SELECT id
-                FROM syllabus_units
-                WHERE id = :unit_id
-            """),
+    return {
+        "message": "Study session deleted successfully"
+    }
+
+
+# ============================================================
+# SYLLABUS
+# ============================================================
+
+@app.get("/subjects/{subject_id}/syllabus")
+def get_subject_syllabus(
+    subject_id: int,
+    db: Session = Depends(get_db)
+):
+
+    units_query = text("""
+        SELECT
+            id,
+            unit_number,
+            unit_name
+        FROM syllabus_units
+        WHERE subject_id = :subject_id
+        ORDER BY unit_number
+    """)
+
+    units = db.execute(
+        units_query,
+        {
+            "subject_id": subject_id
+        }
+    ).mappings().all()
+
+    result = []
+
+    for unit in units:
+
+        topics_query = text("""
+            SELECT
+                id,
+                topic_name,
+                status,
+                mastery
+            FROM syllabus_topics
+            WHERE unit_id = :unit_id
+            ORDER BY id
+        """)
+
+        topics = db.execute(
+            topics_query,
             {
-                "unit_id": topic.unit_id
-            },
-        )
+                "unit_id": unit["id"]
+            }
+        ).mappings().all()
 
-        if not unit_result.fetchone():
-            raise HTTPException(
-                status_code=404,
-                detail="Syllabus unit not found"
-            )
+        result.append({
+            "id": unit["id"],
+            "unit_number": unit["unit_number"],
+            "unit_name": unit["unit_name"],
+            "topics": [
+                dict(topic)
+                for topic in topics
+            ]
+        })
 
-        result = connection.execute(
-            text("""
-                INSERT INTO syllabus_topics (
-                    unit_id,
-                    topic_name,
-                    status,
-                    mastery
-                )
-                VALUES (
-                    :unit_id,
-                    :topic_name,
-                    :status,
-                    :mastery
-                )
-                RETURNING
-                    id,
-                    unit_id,
-                    topic_name,
-                    status,
-                    mastery,
-                    created_at
-            """),
-            topic.model_dump(),
-        )
-
-        row = result.fetchone()
-
-        data = dict(row._mapping)
-
-        if isinstance(data.get("created_at"), datetime):
-            data["created_at"] = data["created_at"].isoformat()
-
-        return data
+    return result
 
 
-# ------------------------------------------------------------
-# UPDATE SYLLABUS TOPIC
-# ------------------------------------------------------------
+class TopicStatusUpdate(BaseModel):
+    status: Optional[str] = None
+    mastery: Optional[int] = None
+
 
 @app.put("/syllabus/topics/{topic_id}")
 def update_syllabus_topic(
     topic_id: int,
-    topic: SyllabusTopicUpdate
+    update: TopicStatusUpdate,
+    db: Session = Depends(get_db)
 ):
 
-    update_data = topic.model_dump(exclude_unset=True)
+    query = text("""
+        UPDATE syllabus_topics
+        SET
+            status = COALESCE(:status, status),
+            mastery = COALESCE(:mastery, mastery)
+        WHERE id = :topic_id
+        RETURNING
+            id,
+            unit_id,
+            topic_name,
+            status,
+            mastery
+    """)
 
-    if not update_data:
-        raise HTTPException(
-            status_code=400,
-            detail="No fields provided for update"
-        )
-
-    if "mastery" in update_data:
-
-        if update_data["mastery"] is not None:
-
-            if (
-                update_data["mastery"] < 0
-                or update_data["mastery"] > 100
-            ):
-                raise HTTPException(
-                    status_code=400,
-                    detail="Mastery must be between 0 and 100"
-                )
-
-    allowed_fields = [
-        "topic_name",
-        "status",
-        "mastery",
-    ]
-
-    fields_to_update = [
-        field
-        for field in update_data
-        if field in allowed_fields
-    ]
-
-    if not fields_to_update:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid update fields"
-        )
-
-    set_clause = ", ".join(
-        f"{field} = :{field}"
-        for field in fields_to_update
-    )
-
-    with engine.begin() as connection:
-
-        result = connection.execute(
-            text(f"""
-                UPDATE syllabus_topics
-                SET {set_clause}
-                WHERE id = :topic_id
-                RETURNING
-                    id,
-                    unit_id,
-                    topic_name,
-                    status,
-                    mastery,
-                    created_at
-            """),
-            {
-                **update_data,
-                "topic_id": topic_id,
-            },
-        )
-
-        row = result.fetchone()
-
-        if not row:
-            raise HTTPException(
-                status_code=404,
-                detail="Syllabus topic not found"
-            )
-
-        data = dict(row._mapping)
-
-        if isinstance(data.get("created_at"), datetime):
-            data["created_at"] = data["created_at"].isoformat()
-
-        return data
-
-
-# ------------------------------------------------------------
-# DELETE SYLLABUS TOPIC
-# ------------------------------------------------------------
-
-@app.delete("/syllabus/topics/{topic_id}")
-def delete_syllabus_topic(topic_id: int):
-
-    with engine.begin() as connection:
-
-        result = connection.execute(
-            text("""
-                DELETE FROM syllabus_topics
-                WHERE id = :topic_id
-                RETURNING id
-            """),
-            {
-                "topic_id": topic_id
-            },
-        )
-
-        row = result.fetchone()
-
-        if not row:
-            raise HTTPException(
-                status_code=404,
-                detail="Syllabus topic not found"
-            )
-
-        return {
-            "message": "Syllabus topic deleted successfully",
-            "id": topic_id,
+    row = db.execute(
+        query,
+        {
+            "topic_id": topic_id,
+            "status": update.status,
+            "mastery": update.mastery
         }
+    ).mappings().first()
 
-
-# ============================================================
-# PDF SYLLABUS EXTRACTION
-# ============================================================
-
-@app.post("/syllabus/upload")
-async def upload_syllabus_pdf(
-    file: UploadFile = File(...)
-):
-
-    if not file.filename:
-        raise HTTPException(
-            status_code=400,
-            detail="No file selected"
-        )
-
-    if not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(
-            status_code=400,
-            detail="Only PDF files are supported"
-        )
-
-    file_bytes = await file.read()
-
-    if not file_bytes:
-        raise HTTPException(
-            status_code=400,
-            detail="Uploaded PDF is empty"
-        )
-
-    try:
-
-        pdf_stream = BytesIO(file_bytes)
-        reader = PdfReader(pdf_stream)
-
-        extracted_pages = []
-
-        for page in reader.pages:
-
-            page_text = page.extract_text()
-
-            if page_text:
-                extracted_pages.append(
-                    page_text.strip()
-                )
-
-        extracted_text = "\n\n".join(
-            extracted_pages
-        ).strip()
-
-    except Exception as error:
-
-        raise HTTPException(
-            status_code=400,
-            detail=f"Could not read PDF: {str(error)}"
-        )
-
-    if not extracted_text:
-
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "No readable text was found in this PDF. "
-                "The PDF may contain scanned images instead of text."
-            )
-        )
-
-    return {
-        "message": "PDF text extracted successfully",
-        "filename": file.filename,
-        "pages": len(reader.pages),
-        "characters": len(extracted_text),
-        "text": extracted_text,
-    }
-
-
-# ============================================================
-# SYLLABUS IMPORT
-# ============================================================
-
-@app.post("/syllabus/import")
-async def import_syllabus(
-    subject_id: int = Form(...),
-    course_code: str = Form(...),
-    file: UploadFile = File(...),
-):
-    """
-    Parse a syllabus PDF and import ONE selected course
-    into ONE StudentOS subject.
-
-    Example:
-
-        subject_id = 3
-        course_code = CS2305
-
-    The parser searches the uploaded PDF for CS2305,
-    extracts its units and topics, and stores them
-    under the selected StudentOS subject.
-    """
-
-    # --------------------------------------------------------
-    # Validate file
-    # --------------------------------------------------------
-
-    if not file.filename:
-
-        raise HTTPException(
-            status_code=400,
-            detail="No PDF file selected"
-        )
-
-    if not file.filename.lower().endswith(".pdf"):
-
-        raise HTTPException(
-            status_code=400,
-            detail="Only PDF files are supported"
-        )
-
-    course_code = course_code.strip().upper()
-
-    if not course_code:
-
-        raise HTTPException(
-            status_code=400,
-            detail="Course code cannot be empty"
-        )
-
-    # --------------------------------------------------------
-    # Read PDF
-    # --------------------------------------------------------
-
-    file_bytes = await file.read()
-
-    if not file_bytes:
-
-        raise HTTPException(
-            status_code=400,
-            detail="Uploaded PDF is empty"
-        )
-
-    # --------------------------------------------------------
-    # Extract PDF text
-    # --------------------------------------------------------
-
-    try:
-
-        pdf_stream = BytesIO(file_bytes)
-
-        reader = PdfReader(pdf_stream)
-
-        extracted_pages = []
-
-        for page in reader.pages:
-
-            page_text = page.extract_text()
-
-            if page_text:
-
-                extracted_pages.append(
-                    page_text.strip()
-                )
-
-        extracted_text = "\n\n".join(
-            extracted_pages
-        ).strip()
-
-    except Exception as error:
-
-        raise HTTPException(
-            status_code=400,
-            detail=f"Could not read PDF: {str(error)}"
-        )
-
-    if not extracted_text:
-
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "No readable text was found in this PDF. "
-                "The PDF may contain scanned images."
-            )
-        )
-
-    # --------------------------------------------------------
-    # Parse syllabus
-    # --------------------------------------------------------
-
-    try:
-
-        parsed = parse_syllabus(
-            extracted_text
-        )
-
-    except Exception as error:
-
-        raise HTTPException(
-            status_code=500,
-            detail=f"Syllabus parsing failed: {str(error)}"
-        )
-
-    # --------------------------------------------------------
-    # Find requested course
-    # --------------------------------------------------------
-
-    selected_course = None
-
-    for course in parsed.get("courses", []):
-
-        if (
-            course.get("course_code", "").upper()
-            == course_code
-        ):
-
-            selected_course = course
-            break
-
-    if selected_course is None:
-
-        available_courses = [
-            {
-                "course_code": course.get(
-                    "course_code"
-                ),
-                "course_name": course.get(
-                    "course_name"
-                ),
-            }
-            for course in parsed.get("courses", [])
-        ]
+    if not row:
 
         raise HTTPException(
             status_code=404,
-            detail={
-                "message": (
-                    f"Course code '{course_code}' "
-                    "was not found in the uploaded PDF."
-                ),
-                "available_courses": available_courses,
-            },
+            detail="Syllabus topic not found"
         )
 
-    # --------------------------------------------------------
-    # Import into PostgreSQL
-    # --------------------------------------------------------
+    db.commit()
+
+    return dict(row)
+
+
+# ============================================================
+# PDF SYLLABUS PARSING
+# ============================================================
+
+def clean_text(text_value):
+
+    if not text_value:
+        return ""
+
+    return " ".join(
+        text_value.replace("\n", " ").split()
+    )
+
+
+@app.post("/syllabus/upload")
+async def upload_syllabus(
+    file: UploadFile = File(...)
+):
+
+    if not file.filename.lower().endswith(".pdf"):
+
+        raise HTTPException(
+            status_code=400,
+            detail="Only PDF files are supported"
+        )
+
+    contents = await file.read()
+
+    temp_path = f"temp_{file.filename}"
 
     try:
 
-        with engine.begin() as connection:
+        with open(temp_path, "wb") as output_file:
+            output_file.write(contents)
 
-            # ------------------------------------------------
-            # Verify StudentOS subject
-            # ------------------------------------------------
+        reader = PdfReader(temp_path)
 
-            subject_result = connection.execute(
-                text("""
-                    SELECT
-                        id,
-                        name,
-                        short_name
-                    FROM subjects
-                    WHERE id = :subject_id
-                """),
-                {
-                    "subject_id": subject_id
-                },
+        pages = []
+
+        for page in reader.pages:
+
+            page_text = page.extract_text() or ""
+            pages.append(page_text)
+
+        full_text = "\n".join(pages)
+
+        return {
+            "filename": file.filename,
+            "pages": len(reader.pages),
+            "characters": len(full_text),
+            "text": full_text
+        }
+
+    finally:
+
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
+
+# ============================================================
+# OPENALEX HELPERS
+# ============================================================
+
+def normalize_search_text(value):
+
+    if not value:
+        return ""
+
+    value = value.lower()
+
+    value = re.sub(
+        r"[^a-z0-9\s-]",
+        " ",
+        value
+    )
+
+    return " ".join(
+        value.split()
+    )
+
+
+def get_query_words(query):
+
+    normalized_query = normalize_search_text(
+        query
+    )
+
+    return [
+        word
+        for word in normalized_query.split()
+        if len(word) > 1
+    ]
+
+
+def reconstruct_abstract(inverted_index):
+
+    if not inverted_index:
+        return None
+
+    words = []
+
+    for word, positions in inverted_index.items():
+
+        for position in positions:
+
+            words.append(
+                (position, word)
             )
 
-            subject = subject_result.fetchone()
+    words.sort(
+        key=lambda item: item[0]
+    )
 
-            if not subject:
+    return " ".join(
+        word
+        for _, word in words
+    )
 
-                raise HTTPException(
-                    status_code=404,
-                    detail="StudentOS subject not found"
-                )
 
-            subject_data = dict(
-                subject._mapping
-            )
+def calculate_research_score(
+    query,
+    title,
+    abstract
+):
 
-            # ------------------------------------------------
-            # Remove existing syllabus for this subject
-            #
-            # Because syllabus_topics references
-            # syllabus_units with ON DELETE CASCADE,
-            # deleting the units also deletes their topics.
-            # ------------------------------------------------
+    normalized_query = normalize_search_text(
+        query
+    )
 
-            connection.execute(
-                text("""
-                    DELETE FROM syllabus_units
-                    WHERE subject_id = :subject_id
-                """),
-                {
-                    "subject_id": subject_id
-                },
-            )
+    normalized_title = normalize_search_text(
+        title
+    )
 
-            # ------------------------------------------------
-            # Insert units and topics
-            # ------------------------------------------------
+    normalized_abstract = normalize_search_text(
+        abstract
+    )
 
-            imported_units = 0
-            imported_topics = 0
+    query_words = get_query_words(
+        query
+    )
 
-            unit_summaries = []
+    if not query_words:
+        return 0
 
-            for unit in selected_course.get(
-                "units",
-                []
-            ):
+    score = 0
 
-                unit_result = connection.execute(
-                    text("""
-                        INSERT INTO syllabus_units (
-                            subject_id,
-                            unit_number,
-                            unit_name
-                        )
-                        VALUES (
-                            :subject_id,
-                            :unit_number,
-                            :unit_name
-                        )
-                        RETURNING id
-                    """),
-                    {
-                        "subject_id": subject_id,
-                        "unit_number": unit[
-                            "unit_number"
-                        ],
-                        "unit_name": unit[
-                            "unit_name"
-                        ],
-                    },
-                )
+    # ========================================================
+    # EXACT PHRASE IN TITLE
+    # ========================================================
 
-                unit_row = unit_result.fetchone()
+    if normalized_query in normalized_title:
 
-                if not unit_row:
-                    raise HTTPException(
-                        status_code=500,
-                        detail=(
-                            "Failed to create syllabus unit"
-                        ),
-                    )
+        score += 1000
 
-                unit_id = unit_row.id
+    # ========================================================
+    # TITLE WORD COVERAGE
+    # ========================================================
 
-                imported_units += 1
+    title_matches = 0
 
-                unit_topic_count = 0
+    for word in query_words:
 
-                for topic_name in unit.get(
-                    "topics",
-                    []
-                ):
+        if word in normalized_title:
 
-                    topic_name = topic_name.strip()
+            title_matches += 1
 
-                    if not topic_name:
-                        continue
+    title_ratio = (
+        title_matches / len(query_words)
+    )
 
-                    connection.execute(
-                        text("""
-                            INSERT INTO syllabus_topics (
-                                unit_id,
-                                topic_name,
-                                status,
-                                mastery
-                            )
-                            VALUES (
-                                :unit_id,
-                                :topic_name,
-                                'Not Started',
-                                0
-                            )
-                        """),
-                        {
-                            "unit_id": unit_id,
-                            "topic_name": topic_name,
-                        },
-                    )
+    score += int(
+        title_ratio * 700
+    )
 
-                    imported_topics += 1
-                    unit_topic_count += 1
+    # ========================================================
+    # ABSTRACT WORD COVERAGE
+    # ========================================================
 
-                unit_summaries.append(
-                    {
-                        "unit_number": unit[
-                            "unit_number"
-                        ],
-                        "unit_name": unit[
-                            "unit_name"
-                        ],
-                        "hours": unit.get(
-                            "hours",
-                            0
-                        ),
-                        "topics_imported": unit_topic_count,
-                    }
-                )
+    abstract_matches = 0
 
-    except HTTPException:
-        raise
+    for word in query_words:
 
-    except Exception as error:
+        if word in normalized_abstract:
 
-        raise HTTPException(
-            status_code=500,
-            detail=(
-                "Syllabus import failed: "
-                f"{str(error)}"
-            ),
+            abstract_matches += 1
+
+    abstract_ratio = (
+        abstract_matches / len(query_words)
+    )
+
+    score += int(
+        abstract_ratio * 150
+    )
+
+    # ========================================================
+    # TITLE MATCH BONUS
+    # ========================================================
+
+    if title_matches > 0:
+
+        score += 100
+
+    # ========================================================
+    # NO TITLE MATCH PENALTY
+    # ========================================================
+
+    if title_matches == 0:
+
+        score -= 400
+
+    # ========================================================
+    # MULTI-WORD PARTIAL MATCH PENALTY
+    # ========================================================
+
+    if len(query_words) >= 2:
+
+        missing_words = (
+            len(query_words)
+            - title_matches
         )
 
-    # --------------------------------------------------------
-    # Return import summary
-    # --------------------------------------------------------
+        score -= missing_words * 75
+
+    # ========================================================
+    # TITLE WORD ORDER BONUS
+    # ========================================================
+
+    if len(query_words) >= 2:
+
+        title_positions = []
+
+        for word in query_words:
+
+            position = normalized_title.find(
+                word
+            )
+
+            if position >= 0:
+
+                title_positions.append(
+                    position
+                )
+
+        if len(title_positions) >= 2:
+
+            if title_positions == sorted(
+                title_positions
+            ):
+
+                score += 50
+
+    return score
+
+
+def normalize_openalex_work(
+    work,
+    query
+):
+
+    abstract = reconstruct_abstract(
+        work.get(
+            "abstract_inverted_index"
+        )
+    )
+
+    authors = []
+
+    for authorship in work.get(
+        "authorships",
+        []
+    ):
+
+        author = authorship.get(
+            "author"
+        )
+
+        if author and author.get(
+            "display_name"
+        ):
+
+            authors.append(
+                author["display_name"]
+            )
+
+    title = (
+        work.get("display_name")
+        or work.get("title")
+    )
+
+    local_score = calculate_research_score(
+        query=query,
+        title=title or "",
+        abstract=abstract
+    )
+
+    # OpenAlex itself provides a relevance score
+    # when using its search functionality.
+    openalex_score = work.get(
+        "relevance_score"
+    )
+
+    if openalex_score is None:
+
+        openalex_score = 0
+
+    # Combine OpenAlex's relevance with our
+    # lightweight title/abstract relevance.
+    final_score = (
+        float(openalex_score) * 100
+        + local_score
+    )
 
     return {
-        "message": "Syllabus imported successfully",
-        "subject": {
-            "id": subject_data["id"],
-            "name": subject_data["name"],
-            "short_name": subject_data[
-                "short_name"
-            ],
-        },
-        "course": {
-            "course_code": selected_course[
-                "course_code"
-            ],
-            "course_name": selected_course[
-                "course_name"
-            ],
-        },
-        "source_file": file.filename,
-        "pdf_pages": len(reader.pages),
-        "courses_detected": parsed.get(
-            "course_count",
+        "id": work.get("id"),
+        "title": title,
+        "publication_year": work.get(
+            "publication_year"
+        ),
+        "publication_date": work.get(
+            "publication_date"
+        ),
+        "type": work.get(
+            "type"
+        ),
+        "doi": work.get(
+            "doi"
+        ),
+        "cited_by_count": work.get(
+            "cited_by_count",
             0
         ),
-        "units_imported": imported_units,
-        "topics_imported": imported_topics,
-        "units": unit_summaries,
+        "authors": authors,
+        "abstract": abstract,
+        "open_access": work.get(
+            "open_access"
+        ),
+        "_relevance_score": final_score
     }
 
 
 # ============================================================
-# SERVER ENTRY POINT
+# RESEARCH API
+# ============================================================
+
+@app.get("/research")
+async def research(
+    query: str,
+    limit: int = 5
+):
+
+    query = query.strip()
+
+    if not query:
+
+        raise HTTPException(
+            status_code=400,
+            detail="Research query cannot be empty"
+        )
+
+    if limit < 1:
+        limit = 1
+
+    if limit > 20:
+        limit = 20
+
+    # Ask OpenAlex for a larger candidate set.
+    # We will locally rank the candidates afterwards.
+    candidate_limit = min(
+        max(limit * 10, 30),
+        100
+    )
+
+    # IMPORTANT:
+    # Use OpenAlex's current `search` parameter
+    # rather than the older `q` parameter.
+    params = {
+    "q": query,
+    "per_page": candidate_limit
+   }
+
+    headers = {
+        "User-Agent": "StudentOS/1.0"
+    }
+
+    try:
+
+        async with httpx.AsyncClient(
+            timeout=20.0
+        ) as client:
+
+            response = await client.get(
+                "https://api.openalex.org/works",
+                params=params,
+                headers=headers
+            )
+
+    except httpx.TimeoutException:
+
+        raise HTTPException(
+            status_code=504,
+            detail=(
+                "OpenAlex took too long to respond. "
+                "Please try again shortly."
+            )
+        )
+
+    except httpx.RequestError:
+
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "Could not connect to OpenAlex. "
+                "Please try again shortly."
+            )
+        )
+
+    # ========================================================
+    # RATE LIMIT
+    # ========================================================
+
+    if response.status_code == 429:
+
+        retry_after = response.headers.get(
+            "Retry-After"
+        )
+
+        if retry_after:
+
+            detail = (
+                "OpenAlex is temporarily rate-limiting "
+                "research requests. Please try again "
+                f"after {retry_after} seconds."
+            )
+
+        else:
+
+            detail = (
+                "OpenAlex is temporarily rate-limiting "
+                "research requests. Please try again "
+                "shortly."
+            )
+
+        raise HTTPException(
+            status_code=429,
+            detail=detail
+        )
+
+    # ========================================================
+    # OTHER OPENALEX ERRORS
+    # ========================================================
+
+    if response.status_code != 200:
+
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "OpenAlex research service returned "
+                f"HTTP {response.status_code}."
+            )
+        )
+
+    try:
+
+        data = response.json()
+
+    except ValueError:
+
+        raise HTTPException(
+            status_code=502,
+            detail="OpenAlex returned invalid JSON."
+        )
+
+    raw_results = data.get(
+        "results",
+        []
+    )
+
+    results = []
+
+    seen_ids = set()
+
+    for work in raw_results:
+
+        work_id = work.get("id")
+
+        if not work_id:
+            continue
+
+        if work_id in seen_ids:
+            continue
+
+        seen_ids.add(work_id)
+
+        normalized = normalize_openalex_work(
+            work,
+            query
+        )
+
+        results.append(
+            normalized
+        )
+
+    # ========================================================
+    # LOCAL RANKING
+    # ========================================================
+
+    results.sort(
+        key=lambda item: item[
+            "_relevance_score"
+        ],
+        reverse=True
+    )
+
+    # ========================================================
+    # LIGHT FILTERING
+    # ========================================================
+
+    # Do NOT use the previous extremely strict filter.
+    # A relevant paper may mention the search terms mainly
+    # in its abstract instead of its title.
+
+    results = results[:limit]
+
+    # ========================================================
+    # REMOVE INTERNAL SCORE
+    # ========================================================
+
+    for result in results:
+
+        result.pop(
+            "_relevance_score",
+            None
+        )
+
+    return {
+        "query": query,
+        "count": data.get(
+            "meta",
+            {}
+        ).get(
+            "count",
+            0
+        ),
+        "results": results
+    }
+
+
+# ============================================================
+# SERVER
 # ============================================================
 
 if __name__ == "__main__":
@@ -1904,5 +1477,5 @@ if __name__ == "__main__":
         "main:app",
         host="127.0.0.1",
         port=8000,
-        reload=True,
+        reload=True
     )
