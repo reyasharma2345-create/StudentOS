@@ -10,1153 +10,864 @@ import {
   Flame,
   ChevronLeft,
   ChevronRight,
+  Activity,
+  ListChecks,
+  Timer,
 } from "lucide-react";
 
-const API_BASE = "http://127.0.0.1:8000";
+import "./Analytics.css";
 
-const WEEK_DAYS = [
-  { key: 0, short: "Mon", full: "Monday" },
-  { key: 1, short: "Tue", full: "Tuesday" },
-  { key: 2, short: "Wed", full: "Wednesday" },
-  { key: 3, short: "Thu", full: "Thursday" },
-  { key: 4, short: "Fri", full: "Friday" },
-  { key: 5, short: "Sat", full: "Saturday" },
-  { key: 6, short: "Sun", full: "Sunday" },
-];
-
-function startOfDay(date) {
-  return new Date(
-    date.getFullYear(),
-    date.getMonth(),
-    date.getDate()
-  );
-}
-
-function dateKey(date) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-
-  return `${year}-${month}-${day}`;
-}
-
-function parseLocalDate(value) {
-  if (!value) return null;
-
-  if (typeof value === "string") {
-    const dateOnlyMatch = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-
-    if (dateOnlyMatch) {
-      const [, year, month, day] = dateOnlyMatch;
-
-      return new Date(
-        Number(year),
-        Number(month) - 1,
-        Number(day)
-      );
-    }
-  }
-
-  const parsed = new Date(value);
-
-  if (Number.isNaN(parsed.getTime())) {
-    return null;
-  }
-
-  return parsed;
-}
-
-function getMonday(date) {
-  const day = date.getDay();
-
-  const difference = day === 0 ? -6 : 1 - day;
-
-  const monday = new Date(date);
-
-  monday.setDate(date.getDate() + difference);
-
-  return startOfDay(monday);
-}
-
-function addDays(date, days) {
-  const result = new Date(date);
-
-  result.setDate(result.getDate() + days);
-
-  return result;
-}
-
-function formatWeekRange(monday) {
-  const sunday = addDays(monday, 6);
-
-  const sameMonth =
-    monday.getMonth() === sunday.getMonth() &&
-    monday.getFullYear() === sunday.getFullYear();
-
-  if (sameMonth) {
-    return `${monday.toLocaleDateString("en-IN", {
-      month: "short",
-    })} ${monday.getDate()} – ${sunday.getDate()}, ${sunday.getFullYear()}`;
-  }
-
-  return `${monday.toLocaleDateString("en-IN", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  })} – ${sunday.toLocaleDateString("en-IN", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  })}`;
-}
-
-function formatDate(date) {
-  if (!date) return "Unknown date";
-
-  return date.toLocaleDateString("en-IN", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
-}
-
-function formatTime(date) {
-  if (!date) return "";
-
-  return date.toLocaleTimeString("en-IN", {
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}
-
-function formatDuration(minutes) {
-  const safeMinutes = Math.max(0, Number(minutes) || 0);
-
-  const hours = Math.floor(safeMinutes / 60);
-  const remainingMinutes = safeMinutes % 60;
-
-  if (hours === 0) {
-    return `${remainingMinutes}m`;
-  }
-
-  if (remainingMinutes === 0) {
-    return `${hours}h`;
-  }
-
-  return `${hours}h ${remainingMinutes}m`;
-}
-
-function normalizeResponse(data, keys = []) {
-  if (Array.isArray(data)) {
-    return data;
-  }
-
-  for (const key of keys) {
-    if (Array.isArray(data?.[key])) {
-      return data[key];
-    }
-  }
-
-  if (Array.isArray(data?.value)) {
-    return data.value;
-  }
-
-  return [];
-}
-
-function getStatusClass(status) {
-  const normalized = String(status || "").toLowerCase();
-
-  if (normalized === "completed") {
-    return "completed";
-  }
-
-  if (normalized === "in progress") {
-    return "in-progress";
-  }
-
-  return "pending";
-}
-
-export default function Analytics() {
+function Analytics() {
   const [subjects, setSubjects] = useState([]);
   const [tasks, setTasks] = useState([]);
   const [studySessions, setStudySessions] = useState([]);
-
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-
   const [weekOffset, setWeekOffset] = useState(0);
 
   useEffect(() => {
-    let cancelled = false;
-
-    async function fetchAnalyticsData() {
+    const loadAnalytics = async () => {
       try {
         setLoading(true);
         setError("");
 
-        const [subjectsResponse, tasksResponse, sessionsResponse] =
-          await Promise.all([
-            fetch(`${API_BASE}/subjects`),
-            fetch(`${API_BASE}/tasks`),
-            fetch(`${API_BASE}/study-sessions`),
-          ]);
+        const [subjectsRes, tasksRes, sessionsRes] = await Promise.all([
+          fetch("http://127.0.0.1:8000/subjects"),
+          fetch("http://127.0.0.1:8000/tasks"),
+          fetch("http://127.0.0.1:8000/study-sessions"),
+        ]);
 
-        if (!subjectsResponse.ok) {
-          throw new Error("Unable to load subjects.");
+        if (!subjectsRes.ok) {
+          throw new Error("Failed to fetch subjects");
         }
 
-        if (!tasksResponse.ok) {
-          throw new Error("Unable to load tasks.");
+        if (!tasksRes.ok) {
+          throw new Error("Failed to fetch tasks");
         }
 
-        if (!sessionsResponse.ok) {
-          throw new Error("Unable to load study sessions.");
+        if (!sessionsRes.ok) {
+          throw new Error("Failed to fetch study sessions");
         }
 
-        const [subjectsData, tasksData, sessionsData] =
-          await Promise.all([
-            subjectsResponse.json(),
-            tasksResponse.json(),
-            sessionsResponse.json(),
-          ]);
-
-        if (cancelled) return;
+        const subjectsData = await subjectsRes.json();
+        const tasksData = await tasksRes.json();
+        const sessionsData = await sessionsRes.json();
 
         setSubjects(
-          normalizeResponse(subjectsData, ["subjects"])
+          Array.isArray(subjectsData)
+            ? subjectsData
+            : subjectsData.subjects || []
         );
 
         setTasks(
-          normalizeResponse(tasksData, ["tasks"])
+          Array.isArray(tasksData) ? tasksData : tasksData.tasks || []
         );
 
         setStudySessions(
-          normalizeResponse(sessionsData, [
-            "study_sessions",
-            "sessions",
-          ])
+          Array.isArray(sessionsData)
+            ? sessionsData
+            : sessionsData.study_sessions || []
         );
       } catch (err) {
-        if (cancelled) return;
-
-        console.error("Analytics loading error:", err);
-
-        setError(
-          err?.message ||
-            "Something went wrong while loading analytics."
-        );
+        console.error("Analytics error:", err);
+        setError(err.message || "Failed to load analytics");
       } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
+        setLoading(false);
       }
-    }
-
-    fetchAnalyticsData();
-
-    return () => {
-      cancelled = true;
     };
+
+    loadAnalytics();
   }, []);
 
-  const selectedMonday = useMemo(() => {
-    const today = startOfDay(new Date());
+  const getWeekStart = (offset = 0) => {
+    const date = new Date();
 
-    const currentMonday = getMonday(today);
+    date.setHours(0, 0, 0, 0);
 
-    return addDays(currentMonday, weekOffset * 7);
-  }, [weekOffset]);
+    const day = date.getDay();
+    const mondayOffset = day === 0 ? -6 : 1 - day;
 
-  const selectedSunday = useMemo(() => {
-    return addDays(selectedMonday, 6);
-  }, [selectedMonday]);
+    date.setDate(date.getDate() + mondayOffset + offset * 7);
+
+    return date;
+  };
+
+  const selectedWeekStart = useMemo(
+    () => getWeekStart(weekOffset),
+    [weekOffset]
+  );
+
+  const selectedWeekEnd = useMemo(() => {
+    const date = new Date(selectedWeekStart);
+    date.setDate(date.getDate() + 6);
+    return date;
+  }, [selectedWeekStart]);
+
+  const isDateInSelectedWeek = (dateValue) => {
+    if (!dateValue) return false;
+
+    const date = new Date(dateValue);
+
+    return date >= selectedWeekStart && date < new Date(
+      selectedWeekEnd.getTime() + 24 * 60 * 60 * 1000
+    );
+  };
 
   const weeklySessions = useMemo(() => {
-    const start = startOfDay(selectedMonday);
-    const end = addDays(startOfDay(selectedSunday), 1);
+    return studySessions.filter((session) =>
+      isDateInSelectedWeek(session.start_time)
+    );
+  }, [studySessions, selectedWeekStart, selectedWeekEnd]);
 
-    return studySessions.filter((session) => {
-      const sessionDate = parseLocalDate(session.start_time);
-
-      if (!sessionDate) return false;
-
-      return sessionDate >= start && sessionDate < end;
-    });
-  }, [studySessions, selectedMonday, selectedSunday]);
-
-  const weeklyData = useMemo(() => {
-    return WEEK_DAYS.map((day) => {
-      const dayDate = addDays(selectedMonday, day.key);
-      const targetDate = dateKey(dayDate);
-
-      const minutes = weeklySessions.reduce(
-        (total, session) => {
-          const sessionDate = parseLocalDate(
-            session.start_time
-          );
-
-          if (!sessionDate) {
-            return total;
-          }
-
-          if (dateKey(sessionDate) !== targetDate) {
-            return total;
-          }
-
-          return (
-            total +
-            (Number(session.duration_minutes) || 0)
-          );
-        },
-        0
-      );
-
-      return {
-        ...day,
-        minutes,
-        hours: minutes / 60,
-        date: dayDate,
-      };
-    });
-  }, [weeklySessions, selectedMonday]);
-
-  const totalWeeklyMinutes = useMemo(() => {
-    return weeklyData.reduce(
-      (total, day) => total + day.minutes,
+  const weeklyMinutes = useMemo(() => {
+    return weeklySessions.reduce(
+      (total, session) => total + Number(session.duration_minutes || 0),
       0
     );
-  }, [weeklyData]);
+  }, [weeklySessions]);
 
-  const totalHours = totalWeeklyMinutes / 60;
-
-  const studyDays = useMemo(() => {
-    return weeklyData.filter((day) => day.minutes > 0).length;
-  }, [weeklyData]);
-
-  const averageHours = studyDays
-    ? totalHours / studyDays
-    : 0;
-
-  const maxHours = useMemo(() => {
-    return Math.max(
-      ...weeklyData.map((day) => day.hours),
-      0
-    );
-  }, [weeklyData]);
+  const weeklyHours = weeklyMinutes / 60;
 
   const completedTasks = useMemo(() => {
     return tasks.filter(
-      (task) =>
-        String(task.status || "").toLowerCase() ===
-        "completed"
-    ).length;
+      (task) => String(task.status || "").toLowerCase() === "completed"
+    );
   }, [tasks]);
 
-  const pendingTasks = Math.max(
-    0,
-    tasks.length - completedTasks
-  );
+  const pendingTasks = Math.max(tasks.length - completedTasks.length, 0);
 
-  const taskCompletionRate = tasks.length
-    ? Math.round(
-        (completedTasks / tasks.length) * 100
-      )
-    : 0;
+  const taskCompletionRate =
+    tasks.length > 0
+      ? Math.round((completedTasks.length / tasks.length) * 100)
+      : 0;
 
   const overallProgress = useMemo(() => {
     if (!subjects.length) return 0;
 
     const totalTopics = subjects.reduce(
-      (total, subject) =>
-        total +
-        Number(
-          subject.syllabus_topics ??
-            subject.topics ??
-            0
-        ),
+      (sum, subject) =>
+        sum + Number(subject.syllabus_topics ?? subject.topics ?? 0),
       0
     );
 
     const completedTopics = subjects.reduce(
-      (total, subject) =>
-        total +
-        Number(subject.completed_topics || 0),
+      (sum, subject) =>
+        sum + Number(subject.completed_topics ?? 0),
       0
     );
 
     if (totalTopics > 0) {
-      return Math.round(
-        (completedTopics / totalTopics) * 100
-      );
+      return Math.round((completedTopics / totalTopics) * 100);
     }
 
-    const progressTotal = subjects.reduce(
-      (total, subject) =>
-        total + Number(subject.progress || 0),
-      0
-    );
-
     return Math.round(
-      progressTotal / subjects.length
+      subjects.reduce(
+        (sum, subject) => sum + Number(subject.progress || 0),
+        0
+      ) / subjects.length
     );
   }, [subjects]);
 
-  const studyDates = useMemo(() => {
-    const dates = new Set();
+  const formatTime = (minutes) => {
+    const value = Number(minutes || 0);
 
-    studySessions.forEach((session) => {
-      const sessionDate = parseLocalDate(
-        session.start_time
-      );
-
-      if (sessionDate) {
-        dates.add(dateKey(sessionDate));
-      }
-    });
-
-    return dates;
-  }, [studySessions]);
-
-  const currentStudyStreak = useMemo(() => {
-    let streak = 0;
-
-    let currentDate = startOfDay(new Date());
-
-    while (studyDates.has(dateKey(currentDate))) {
-      streak += 1;
-
-      currentDate = addDays(currentDate, -1);
+    if (value < 60) {
+      return `${value}m`;
     }
 
-    return streak;
-  }, [studyDates]);
+    const hours = Math.floor(value / 60);
+    const mins = value % 60;
+
+    return mins === 0 ? `${hours}h` : `${hours}h ${mins}m`;
+  };
+
+  const formatActivityDate = (dateValue) => {
+    if (!dateValue) return "";
+
+    const date = new Date(dateValue);
+
+    return date.toLocaleDateString("en-IN", {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    });
+  };
+
+  const formatWeekLabel = () => {
+    const start = selectedWeekStart;
+    const end = selectedWeekEnd;
+
+    const sameMonth = start.getMonth() === end.getMonth();
+
+    if (sameMonth) {
+      return `${start.toLocaleDateString("en-IN", {
+        month: "short",
+      })} ${start.getDate()} – ${end.getDate()}, ${end.getFullYear()}`;
+    }
+
+    return `${start.toLocaleDateString("en-IN", {
+      day: "numeric",
+      month: "short",
+    })} – ${end.toLocaleDateString("en-IN", {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    })}`;
+  };
+
+  const weeklyChart = useMemo(() => {
+    const days = [];
+
+    for (let i = 0; i < 7; i++) {
+      const date = new Date(selectedWeekStart);
+      date.setDate(date.getDate() + i);
+
+      const dateKey = date.toDateString();
+
+      const minutes = weeklySessions
+        .filter((session) => {
+          const sessionDate = new Date(session.start_time);
+          return sessionDate.toDateString() === dateKey;
+        })
+        .reduce(
+          (total, session) =>
+            total + Number(session.duration_minutes || 0),
+          0
+        );
+
+      days.push({
+        date,
+        minutes,
+        label: date.toLocaleDateString("en-IN", {
+          weekday: "short",
+        }),
+      });
+    }
+
+    return days;
+  }, [weeklySessions, selectedWeekStart]);
+
+  const maxChartMinutes = Math.max(
+    ...weeklyChart.map((day) => day.minutes),
+    60
+  );
+
+  const studyDays = weeklyChart.filter((day) => day.minutes > 0).length;
+
+  const consistency = Math.round((studyDays / 7) * 100);
+
+  const streak = useMemo(() => {
+    if (!studySessions.length) return 0;
+
+    const studyDates = new Set(
+      studySessions
+        .filter((session) => session.start_time)
+        .map((session) => {
+          const date = new Date(session.start_time);
+          return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+        })
+    );
+
+    let streakCount = 0;
+    const current = new Date();
+
+    current.setHours(0, 0, 0, 0);
+
+    while (true) {
+      const key = `${current.getFullYear()}-${current.getMonth()}-${current.getDate()}`;
+
+      if (!studyDates.has(key)) {
+        break;
+      }
+
+      streakCount++;
+      current.setDate(current.getDate() - 1);
+    }
+
+    return streakCount;
+  }, [studySessions]);
 
   const subjectPerformance = useMemo(() => {
     return subjects.map((subject) => {
       const subjectSessions = studySessions.filter(
-        (session) =>
-          Number(session.subject_id) ===
-          Number(subject.id)
+        (session) => Number(session.subject_id) === Number(subject.id)
       );
 
-      const studyMinutes = subjectSessions.reduce(
+      const minutes = subjectSessions.reduce(
         (total, session) =>
-          total +
-          (Number(session.duration_minutes) || 0),
+          total + Number(session.duration_minutes || 0),
         0
       );
 
-      const syllabusTopics = Number(
-        subject.syllabus_topics ??
-          subject.topics ??
-          0
-      );
-
-      const completedTopics = Number(
-        subject.completed_topics || 0
-      );
-
-      let calculatedProgress = Number(
-        subject.progress || 0
-      );
-
-      if (syllabusTopics > 0) {
-        calculatedProgress = Math.round(
-          (completedTopics / syllabusTopics) * 100
-        );
-      }
+      const progress = Number(subject.progress || 0);
 
       return {
-        id: subject.id,
-        name: subject.name || "Unknown Subject",
-        shortName:
-          subject.short_name ||
-          subject.name ||
-          "Subject",
-        progress: Math.max(
-          0,
-          Math.min(100, calculatedProgress)
+        ...subject,
+        minutes,
+        progress,
+        topics: Number(
+          subject.syllabus_topics ?? subject.topics ?? 0
         ),
-        topics: syllabusTopics,
-        completedTopics,
-        studyMinutes,
-        color: subject.color || "blue",
+        completedTopics: Number(subject.completed_topics ?? 0),
       };
     });
   }, [subjects, studySessions]);
 
-  const consistencyPercentage = Math.round(
-    (studyDays / 7) * 100
-  );
-
   const recentActivity = useMemo(() => {
-    const activity = [];
+    const activities = [];
 
     studySessions.forEach((session) => {
-      const sessionDate = parseLocalDate(
-        session.start_time
+      const subject = subjects.find(
+        (item) => Number(item.id) === Number(session.subject_id)
       );
 
-      activity.push({
+      activities.push({
         id: `study-${session.id}`,
         type: "study",
-        title:
-          session.topic ||
-          "Study session",
-        subtitle:
-          session.subject_short_name ||
-          session.subject_name ||
-          "Study",
-        date: sessionDate,
-        duration: Number(
-          session.duration_minutes || 0
-        ),
+        title: session.topic
+          ? `Studied ${session.topic}`
+          : "Study session completed",
+        subtitle: subject?.name || "Study session",
+        date: session.start_time,
+        duration: session.duration_minutes,
       });
     });
 
-    tasks
-      .filter(
-        (task) =>
-          String(task.status || "").toLowerCase() ===
-          "completed"
-      )
-      .forEach((task) => {
-        const taskDate = parseLocalDate(
-          task.created_at
-        );
-
-        activity.push({
-          id: `task-${task.id}`,
-          type: "task",
-          title: task.title,
-          subtitle:
-            task.subject_short_name ||
-            task.subject_name ||
-            "Task",
-          date: taskDate,
-          duration: null,
-        });
+    completedTasks.forEach((task) => {
+      activities.push({
+        id: `task-${task.id}`,
+        type: "completed",
+        title: `Completed ${task.title}`,
+        subtitle: task.subject_name || "Task",
+        date: task.created_at || task.due_date,
       });
+    });
 
-    return activity
-      .filter((item) => item.date)
-      .sort(
-        (a, b) =>
-          b.date.getTime() - a.date.getTime()
-      )
+    return activities
+      .sort((a, b) => new Date(b.date) - new Date(a.date))
       .slice(0, 5);
-  }, [studySessions, tasks]);
-
-  const taskBreakdown = useMemo(() => {
-    const total = tasks.length;
-
-    if (!total) {
-      return {
-        completed: 0,
-        pending: 0,
-        completedPercentage: 0,
-        pendingPercentage: 0,
-      };
-    }
-
-    return {
-      completed: completedTasks,
-      pending: pendingTasks,
-      completedPercentage: Math.round(
-        (completedTasks / total) * 100
-      ),
-      pendingPercentage: Math.round(
-        (pendingTasks / total) * 100
-      ),
-    };
-  }, [tasks, completedTasks, pendingTasks]);
-
-  const maxBarHeight = 180;
+  }, [studySessions, completedTasks, subjects]);
 
   if (loading) {
     return (
-      <div className="analytics-page">
+      <section className="dashboard-content analytics-page">
         <div className="analytics-loading">
-          <div className="analytics-loading-icon">
-            <BarChart3 size={28} />
-          </div>
-
-          <h2>Loading analytics...</h2>
-
-          <p>
-            Fetching your subjects, tasks and study
-            sessions.
-          </p>
+          <div className="analytics-loading-spinner" />
+          <h3>Loading analytics</h3>
+          <p>Preparing your study insights...</p>
         </div>
-      </div>
+      </section>
     );
   }
 
   if (error) {
     return (
-      <div className="analytics-page">
+      <section className="dashboard-content analytics-page">
         <div className="analytics-error">
           <div className="analytics-error-icon">
             <BarChart3 size={28} />
           </div>
-
-          <h2>Unable to load analytics</h2>
-
+          <h3>Unable to load analytics</h3>
           <p>{error}</p>
-
           <button
             type="button"
             onClick={() => window.location.reload()}
+            className="analytics-retry-button"
           >
-            Try Again
+            Try again
           </button>
         </div>
-      </div>
+      </section>
     );
   }
 
   return (
-    <div className="analytics-page">
+    <section className="dashboard-content analytics-page">
       {/* HEADER */}
       <div className="analytics-header">
         <div>
           <div className="analytics-eyebrow">
-            <BarChart3 size={16} />
+            <BarChart3 size={15} />
             PERFORMANCE OVERVIEW
           </div>
 
           <h1>Analytics</h1>
 
           <p>
-            Understand your study habits and academic
-            progress.
+            Understand your study habits, progress, and consistency.
           </p>
         </div>
 
         <div className="analytics-week-selector">
           <button
             type="button"
-            onClick={() =>
-              setWeekOffset((value) => value - 1)
-            }
+            className="week-arrow"
+            onClick={() => setWeekOffset((value) => value - 1)}
             aria-label="Previous week"
           >
-            <ChevronLeft size={18} />
+            <ChevronLeft size={19} />
           </button>
 
           <div className="analytics-week-label">
-            <CalendarDays size={16} />
-
-            <span>
-              {formatWeekRange(selectedMonday)}
-            </span>
+            <CalendarDays size={17} />
+            <span>{formatWeekLabel()}</span>
           </div>
 
           <button
             type="button"
-            onClick={() =>
-              setWeekOffset((value) => value + 1)
-            }
+            className="week-arrow"
+            onClick={() => setWeekOffset((value) => value + 1)}
             aria-label="Next week"
           >
-            <ChevronRight size={18} />
+            <ChevronRight size={19} />
           </button>
         </div>
       </div>
 
-      {/* STAT CARDS */}
-      <div className="analytics-stats-grid">
-        <div className="analytics-stat-card">
-          <div className="analytics-stat-icon blue">
-            <Clock3 size={21} />
+      {/* KPI CARDS */}
+      <div className="analytics-stat-grid">
+        <div className="analytics-stat-card blue">
+          <div className="analytics-stat-top">
+            <div className="analytics-stat-icon">
+              <Clock3 size={22} />
+            </div>
+
+            <span className="analytics-stat-tag">THIS WEEK</span>
           </div>
 
-          <div className="analytics-stat-content">
-            <span className="analytics-stat-label">
-              Study Time
-            </span>
+          <div className="analytics-stat-value">
+            {formatTime(weeklyMinutes)}
+          </div>
 
-            <strong>
-              {formatDuration(totalWeeklyMinutes)}
-            </strong>
+          <div className="analytics-stat-title">Study Time</div>
 
-            <small>
-              {weekOffset === 0
-                ? "This week"
-                : "Selected week"}
-            </small>
+          <div className="analytics-stat-description">
+            Total focused study time
           </div>
         </div>
 
-        <div className="analytics-stat-card">
-          <div className="analytics-stat-icon burgundy">
-            <CheckCircle2 size={21} />
+        <div className="analytics-stat-card burgundy">
+          <div className="analytics-stat-top">
+            <div className="analytics-stat-icon">
+              <CheckCircle2 size={22} />
+            </div>
+
+            <span className="analytics-stat-tag">TASKS</span>
           </div>
 
-          <div className="analytics-stat-content">
-            <span className="analytics-stat-label">
-              Tasks Completed
-            </span>
-
-            <strong>
-              {completedTasks}
-            </strong>
-
-            <small>
-              {tasks.length} total tasks
-            </small>
-          </div>
-        </div>
-
-        <div className="analytics-stat-card">
-          <div className="analytics-stat-icon gold">
-            <Flame size={21} />
+          <div className="analytics-stat-value">
+            {completedTasks.length}
+            <span> / {tasks.length}</span>
           </div>
 
-          <div className="analytics-stat-content">
-            <span className="analytics-stat-label">
-              Study Streak
-            </span>
+          <div className="analytics-stat-title">Tasks Completed</div>
 
-            <strong>
-              {currentStudyStreak}{" "}
-              {currentStudyStreak === 1
-                ? "day"
-                : "days"}
-            </strong>
-
-            <small>
-              Consecutive study days
-            </small>
+          <div className="analytics-stat-description">
+            {taskCompletionRate}% completion rate
           </div>
         </div>
 
-        <div className="analytics-stat-card">
-          <div className="analytics-stat-icon blue">
-            <Target size={21} />
+        <div className="analytics-stat-card gold">
+          <div className="analytics-stat-top">
+            <div className="analytics-stat-icon">
+              <Flame size={22} />
+            </div>
+
+            <span className="analytics-stat-tag">STREAK</span>
           </div>
 
-          <div className="analytics-stat-content">
-            <span className="analytics-stat-label">
-              Overall Progress
-            </span>
+          <div className="analytics-stat-value">
+            {streak}
+            <span> {streak === 1 ? "day" : "days"}</span>
+          </div>
 
-            <strong>
-              {overallProgress}%
-            </strong>
+          <div className="analytics-stat-title">Study Streak</div>
 
-            <small>
-              Syllabus coverage
-            </small>
+          <div className="analytics-stat-description">
+            Consecutive study days
+          </div>
+        </div>
+
+        <div className="analytics-stat-card navy">
+          <div className="analytics-stat-top">
+            <div className="analytics-stat-icon">
+              <Target size={22} />
+            </div>
+
+            <span className="analytics-stat-tag">OVERALL</span>
+          </div>
+
+          <div className="analytics-stat-value">
+            {overallProgress}%
+          </div>
+
+          <div className="analytics-stat-title">Overall Progress</div>
+
+          <div className="analytics-stat-description">
+            Across your tracked syllabus
           </div>
         </div>
       </div>
 
-      {/* WEEKLY STUDY HOURS */}
-      <section className="analytics-section">
-        <div className="analytics-section-header">
-          <div>
-            <h2>Weekly Study Hours</h2>
+      {/* MAIN GRID */}
+      <div className="analytics-main-grid">
+        {/* WEEKLY CHART */}
+        <div className="analytics-card weekly-chart-card">
+          <div className="analytics-card-header">
+            <div>
+              <div className="card-label">
+                <TrendingUp size={15} />
+                WEEKLY ACTIVITY
+              </div>
 
-            <p>
-              Your study activity across the selected
-              week.
-            </p>
+              <h2>Study Hours</h2>
+
+              <p>Daily study time for the selected week</p>
+            </div>
+
+            <div className="chart-total">
+              <strong>{weeklyHours.toFixed(1)}h</strong>
+              <span>total</span>
+            </div>
           </div>
 
-          <div className="analytics-section-summary">
-            <strong>
-              {totalHours.toFixed(1)}h
-            </strong>
-
-            <span>
-              {studyDays}{" "}
-              {studyDays === 1
-                ? "study day"
-                : "study days"}
-            </span>
-          </div>
-        </div>
-
-        <div className="analytics-chart-card">
-          <div className="analytics-bar-chart">
-            {weeklyData.map((day) => {
+          <div className="bar-chart">
+            {weeklyChart.map((day) => {
               const height =
-                maxHours > 0
+                day.minutes > 0
                   ? Math.max(
-                      (day.hours / maxHours) *
-                        maxBarHeight,
-                      day.hours > 0 ? 8 : 0
+                      (day.minutes / maxChartMinutes) * 100,
+                      8
                     )
-                  : 0;
+                  : 4;
 
               return (
-                <div
-                  className="analytics-bar-column"
-                  key={day.key}
-                  title={`${day.full}: ${formatDuration(
-                    day.minutes
-                  )}`}
-                >
-                  <div className="analytics-bar-value">
-                    {day.hours > 0
-                      ? `${day.hours.toFixed(1)}h`
-                      : ""}
+                <div className="bar-column" key={day.date.toISOString()}>
+                  <div className="bar-value">
+                    {day.minutes > 0 ? formatTime(day.minutes) : ""}
                   </div>
 
-                  <div className="analytics-bar-wrapper">
+                  <div className="bar-track">
                     <div
-                      className="analytics-bar"
-                      style={{
-                        height: `${height}px`,
-                      }}
+                      className={`bar-fill ${
+                        day.minutes > 0 ? "active" : ""
+                      }`}
+                      style={{ height: `${height}%` }}
                     />
                   </div>
 
-                  <span className="analytics-bar-label">
-                    {day.short}
-                  </span>
+                  <div className="bar-label">{day.label}</div>
                 </div>
               );
             })}
           </div>
 
-          <div className="analytics-chart-footer">
+          <div className="chart-footer">
             <span>
-              Average per study day:{" "}
-              <strong>
-                {averageHours.toFixed(1)}h
-              </strong>
+              <Activity size={14} />
+              {studyDays} of 7 days active
             </span>
 
-            <span>
-              Total:{" "}
-              <strong>
-                {formatDuration(totalWeeklyMinutes)}
-              </strong>
-            </span>
+            <span>{weeklyMinutes} minutes studied</span>
           </div>
         </div>
-      </section>
 
-      {/* CONSISTENCY + TASK BREAKDOWN */}
-      <div className="analytics-two-column">
-        <section className="analytics-section analytics-consistency-section">
-          <div className="analytics-section-header">
+        {/* CONSISTENCY */}
+        <div className="analytics-card consistency-card">
+          <div className="analytics-card-header">
             <div>
-              <h2>Study Consistency</h2>
+              <div className="card-label">
+                <Flame size={15} />
+                CONSISTENCY
+              </div>
 
-              <p>
-                How regularly you studied this week.
-              </p>
+              <h2>Study Consistency</h2>
             </div>
           </div>
 
-          <div className="analytics-consistency-card">
+          <div className="consistency-content">
             <div
-              className="analytics-consistency-ring"
+              className="consistency-ring"
               style={{
-                "--progress": `${consistencyPercentage}%`,
+                "--consistency": `${consistency * 3.6}deg`,
               }}
             >
-              <div className="analytics-consistency-ring-inner">
-                <strong>
-                  {consistencyPercentage}%
-                </strong>
-
-                <span>Consistency</span>
+              <div className="consistency-ring-inner">
+                <strong>{consistency}%</strong>
+                <span>consistent</span>
               </div>
             </div>
 
-            <div className="analytics-consistency-details">
+            <div className="consistency-details">
               <div>
-                <span className="analytics-dot blue" />
-                <div>
-                  <strong>
-                    {studyDays}/7 days
-                  </strong>
-
-                  <small>
-                    Days with study activity
-                  </small>
-                </div>
+                <span className="consistency-detail-number">
+                  {studyDays}
+                </span>
+                <span>active days</span>
               </div>
 
               <div>
-                <span className="analytics-dot burgundy" />
-                <div>
-                  <strong>
-                    {averageHours.toFixed(1)}h
-                  </strong>
-
-                  <small>
-                    Average study time
-                  </small>
-                </div>
+                <span className="consistency-detail-number">
+                  {formatTime(weeklyMinutes)}
+                </span>
+                <span>study time</span>
               </div>
             </div>
           </div>
-        </section>
 
-        <section className="analytics-section">
-          <div className="analytics-section-header">
-            <div>
-              <h2>Task Breakdown</h2>
-
-              <p>
-                Current assignment completion.
-              </p>
-            </div>
+          <div className="consistency-message">
+            {consistency === 0 ? (
+              <>
+                <strong>Start your week.</strong>
+                <span>
+                  Study even for 20–30 minutes today to build momentum.
+                </span>
+              </>
+            ) : consistency < 50 ? (
+              <>
+                <strong>Good start!</strong>
+                <span>
+                  Try to add another study day to improve your consistency.
+                </span>
+              </>
+            ) : (
+              <>
+                <strong>Great consistency!</strong>
+                <span>
+                  Keep showing up regularly and protect your streak.
+                </span>
+              </>
+            )}
           </div>
-
-          <div className="analytics-task-card">
-            <div className="analytics-task-donut">
-              <div
-                className="analytics-task-donut-ring"
-                style={{
-                  "--task-progress": `${taskBreakdown.completedPercentage}%`,
-                }}
-              >
-                <div className="analytics-task-donut-inner">
-                  <strong>
-                    {taskCompletionRate}%
-                  </strong>
-
-                  <span>Complete</span>
-                </div>
-              </div>
-            </div>
-
-            <div className="analytics-task-legend">
-              <div>
-                <span className="analytics-dot blue" />
-
-                <div>
-                  <strong>
-                    {completedTasks}
-                  </strong>
-
-                  <small>Completed</small>
-                </div>
-              </div>
-
-              <div>
-                <span className="analytics-dot burgundy" />
-
-                <div>
-                  <strong>
-                    {pendingTasks}
-                  </strong>
-
-                  <small>Pending</small>
-                </div>
-              </div>
-
-              <div>
-                <span className="analytics-dot gold" />
-
-                <div>
-                  <strong>
-                    {tasks.length}
-                  </strong>
-
-                  <small>Total tasks</small>
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
+        </div>
       </div>
 
       {/* SUBJECT PERFORMANCE */}
-      <section className="analytics-section">
-        <div className="analytics-section-header">
+      <div className="analytics-card subject-performance-card">
+        <div className="analytics-card-header">
           <div>
+            <div className="card-label">
+              <BookOpen size={15} />
+              SUBJECTS
+            </div>
+
             <h2>Subject Performance</h2>
 
             <p>
-              Syllabus coverage and time invested in
-              each subject.
+              Progress and study time across your tracked subjects
             </p>
+          </div>
+
+          <div className="subject-count">
+            {subjects.length} subjects
           </div>
         </div>
 
-        <div className="analytics-subject-list">
-          {subjectPerformance.length === 0 ? (
-            <div className="analytics-empty-state">
-              <BookOpen size={28} />
-
-              <p>
-                No subjects available yet.
-              </p>
-            </div>
-          ) : (
-            subjectPerformance.map((subject) => (
-              <div
-                className="analytics-subject-row"
-                key={subject.id}
-              >
-                <div className="analytics-subject-main">
+        {subjectPerformance.length === 0 ? (
+          <div className="analytics-empty">
+            <BookOpen size={28} />
+            <p>No subjects available yet.</p>
+          </div>
+        ) : (
+          <div className="subject-performance-list">
+            {subjectPerformance.map((subject, index) => (
+              <div className="performance-row" key={subject.id}>
+                <div className="performance-subject">
                   <div
-                    className={`analytics-subject-icon ${subject.color}`}
+                    className={`performance-icon performance-color-${
+                      subject.color || ["blue", "burgundy", "gold"][index % 3]
+                    }`}
                   >
                     <BookOpen size={18} />
                   </div>
 
                   <div>
                     <strong>
-                      {subject.name}
+                      {subject.short_name || subject.name}
                     </strong>
 
                     <span>
-                      {subject.completedTopics}/
-                      {subject.topics} topics completed
+                      {subject.completedTopics} / {subject.topics} topics
                     </span>
                   </div>
                 </div>
 
-                <div className="analytics-subject-progress">
-                  <div className="analytics-progress-info">
-                    <span>
-                      {formatDuration(
-                        subject.studyMinutes
-                      )}
-                    </span>
-
-                    <strong>
-                      {subject.progress}%
-                    </strong>
+                <div className="performance-progress">
+                  <div className="performance-progress-top">
+                    <span>{formatTime(subject.minutes)}</span>
+                    <strong>{subject.progress}%</strong>
                   </div>
 
-                  <div className="analytics-progress-track">
+                  <div className="performance-track">
                     <div
-                      className={`analytics-progress-fill ${subject.color}`}
+                      className="performance-fill"
                       style={{
-                        width: `${subject.progress}%`,
+                        width: `${Math.min(
+                          Math.max(subject.progress, 0),
+                          100
+                        )}%`,
                       }}
                     />
                   </div>
                 </div>
               </div>
-            ))
-          )}
-        </div>
-      </section>
+            ))}
+          </div>
+        )}
+      </div>
 
-      {/* RECENT ACTIVITY */}
-      <section className="analytics-section">
-        <div className="analytics-section-header">
-          <div>
-            <h2>Recent Activity</h2>
+      {/* BOTTOM GRID */}
+      <div className="analytics-bottom-grid">
+        {/* TASK BREAKDOWN */}
+        <div className="analytics-card task-breakdown-card">
+          <div className="analytics-card-header">
+            <div>
+              <div className="card-label">
+                <ListChecks size={15} />
+                TASKS
+              </div>
 
-            <p>
-              Your latest study sessions and completed
-              tasks.
-            </p>
+              <h2>Task Breakdown</h2>
+            </div>
           </div>
 
-          <TrendingUp size={22} />
-        </div>
-
-        <div className="analytics-activity-list">
-          {recentActivity.length === 0 ? (
-            <div className="analytics-empty-state">
-              <CalendarDays size={28} />
-
-              <p>
-                No recent activity yet.
-              </p>
+          <div className="task-breakdown-content">
+            <div
+              className="task-donut"
+              style={{
+                "--task-progress": `${taskCompletionRate * 3.6}deg`,
+              }}
+            >
+              <div className="task-donut-inner">
+                <strong>{taskCompletionRate}%</strong>
+                <span>complete</span>
+              </div>
             </div>
-          ) : (
-            recentActivity.map((activity) => (
-              <div
-                className="analytics-activity-row"
-                key={activity.id}
-              >
-                <div
-                  className={`analytics-activity-icon ${
-                    activity.type === "study"
-                      ? "blue"
-                      : "burgundy"
-                  }`}
-                >
-                  {activity.type === "study" ? (
-                    <Clock3 size={17} />
-                  ) : (
-                    <CheckCircle2 size={17} />
-                  )}
-                </div>
 
-                <div className="analytics-activity-content">
-                  <strong>
-                    {activity.title}
-                  </strong>
-
-                  <span>
-                    {activity.subtitle}
-                  </span>
-                </div>
-
-                <div className="analytics-activity-meta">
-                  <strong>
-                    {activity.type === "study"
-                      ? formatDuration(
-                          activity.duration
-                        )
-                      : "Completed"}
-                  </strong>
-
-                  <span>
-                    {formatDate(activity.date)}
-                    {activity.type === "study" &&
-                      ` • ${formatTime(
-                        activity.date
-                      )}`}
-                  </span>
+            <div className="task-legend">
+              <div className="task-legend-item">
+                <span className="legend-dot completed" />
+                <div>
+                  <strong>{completedTasks.length}</strong>
+                  <span>Completed</span>
                 </div>
               </div>
-            ))
+
+              <div className="task-legend-item">
+                <span className="legend-dot pending" />
+                <div>
+                  <strong>{pendingTasks}</strong>
+                  <span>Pending</span>
+                </div>
+              </div>
+
+              <div className="task-total">
+                {tasks.length} total tasks
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* RECENT ACTIVITY */}
+        <div className="analytics-card activity-card">
+          <div className="analytics-card-header">
+            <div>
+              <div className="card-label">
+                <Activity size={15} />
+                RECENT
+              </div>
+
+              <h2>Recent Activity</h2>
+            </div>
+
+            <Timer size={19} className="activity-header-icon" />
+          </div>
+
+          {recentActivity.length === 0 ? (
+            <div className="analytics-empty activity-empty">
+              <Activity size={28} />
+              <p>Your recent activity will appear here.</p>
+            </div>
+          ) : (
+            <div className="activity-list">
+              {recentActivity.map((activity) => (
+                <div className="activity-item" key={activity.id}>
+                  <div
+                    className={`activity-icon ${
+                      activity.type === "completed"
+                        ? "completed"
+                        : "study"
+                    }`}
+                  >
+                    {activity.type === "completed" ? (
+                      <CheckCircle2 size={17} />
+                    ) : (
+                      <BookOpen size={17} />
+                    )}
+                  </div>
+
+                  <div className="activity-info">
+                    <strong>{activity.title}</strong>
+
+                    <span>
+                      {activity.subtitle} •{" "}
+                      {formatActivityDate(activity.date)}
+                    </span>
+                  </div>
+
+                  {activity.duration ? (
+                    <span className="activity-duration">
+                      {formatTime(activity.duration)}
+                    </span>
+                  ) : null}
+                </div>
+              ))}
+            </div>
           )}
         </div>
-      </section>
+      </div>
 
       {/* FOOTER SUMMARY */}
-      <div className="analytics-footer-summary">
+      <div className="analytics-summary-strip">
         <div>
-          <span>Subjects tracked</span>
-          <strong>{subjects.length}</strong>
+          <BookOpen size={17} />
+          <span>
+            <strong>{subjects.length}</strong> subjects tracked
+          </span>
         </div>
 
         <div>
-          <span>Total tasks</span>
-          <strong>{tasks.length}</strong>
+          <ListChecks size={17} />
+          <span>
+            <strong>{tasks.length}</strong> total tasks
+          </span>
         </div>
 
         <div>
-          <span>Total study sessions</span>
-          <strong>
-            {studySessions.length}
-          </strong>
+          <Timer size={17} />
+          <span>
+            <strong>{studySessions.length}</strong> study sessions
+          </span>
         </div>
 
         <div>
-          <span>Total study time</span>
-          <strong>
-            {formatDuration(
-              studySessions.reduce(
-                (total, session) =>
-                  total +
-                  (Number(
-                    session.duration_minutes
-                  ) || 0),
-                0
-              )
-            )}
-          </strong>
+          <Clock3 size={17} />
+          <span>
+            <strong>
+              {formatTime(
+                studySessions.reduce(
+                  (total, session) =>
+                    total + Number(session.duration_minutes || 0),
+                  0
+                )
+              )}
+            </strong>{" "}
+            total study time
+          </span>
         </div>
       </div>
-    </div>
+    </section>
   );
 }
+
+export default Analytics;

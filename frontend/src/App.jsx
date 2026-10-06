@@ -16,6 +16,7 @@ import {
   Search,
   Bell,
   Plus,
+  FlaskConical,
 } from "lucide-react";
 
 import {
@@ -32,6 +33,7 @@ import StudyPlanner from "./StudyPlanner.jsx";
 import AIAssistant from "./AIAssistant.jsx";
 import Analytics from "./Analytics.jsx";
 import Settings from "./Settings.jsx";
+import ResearchHub from "./ResearchHub.jsx";
 
 
 function Sidebar() {
@@ -71,6 +73,12 @@ function Sidebar() {
       path: "/ai",
       label: "AI Assistant",
       icon: Sparkles,
+    },
+
+    {
+      path: "/research",
+      label: "Research Hub",
+      icon: FlaskConical,
     },
 
     {
@@ -569,6 +577,12 @@ function App() {
           <Route
             path="/ai"
             element={<AIAssistant />}
+          />
+
+
+          <Route
+            path="/research"
+            element={<ResearchHub />}
           />
 
 
