@@ -45,3 +45,4 @@ The goal of StudentOS is to build a practical platform that helps students organ
 ## 📌 Project Status
 
 🚧 Currently under development.
+- 2026-10-08: StudentOS development audit started.
