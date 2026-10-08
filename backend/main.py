@@ -4,14 +4,14 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from typing import Optional
 from database import get_db
 import os
 import httpx
 from pypdf import PdfReader
 from dotenv import load_dotenv
-from google import genai
-from google.genai import types
+from groq import AsyncGroq
 import json
 import re
 
@@ -22,19 +22,25 @@ import re
 
 load_dotenv()
 
+AI_PROVIDER = os.getenv("AI_PROVIDER", "groq").strip().lower()
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
+AI_MODEL = os.getenv("AI_MODEL", GROQ_MODEL if AI_PROVIDER == "groq" else GEMINI_MODEL)
+APP_TIMEZONE = os.getenv("APP_TIMEZONE", "Asia/Kolkata")
+try:
+    APP_TZ = ZoneInfo(APP_TIMEZONE)
+except Exception:
+    APP_TIMEZONE = "Asia/Kolkata"
+    APP_TZ = ZoneInfo(APP_TIMEZONE)
 
-GEMINI_MODEL = os.getenv(
-    "GEMINI_MODEL",
-    "gemini-3.5-flash-lite"
-)
+def get_app_now():
+    return datetime.now(APP_TZ)
 
-gemini_client = None
-
-if GEMINI_API_KEY:
-    gemini_client = genai.Client(
-        api_key=GEMINI_API_KEY
-    )
+groq_client = None
+if GROQ_API_KEY:
+    groq_client = AsyncGroq(api_key=GROQ_API_KEY)
 
 # ============================================================
 # APP
@@ -1384,8 +1390,6 @@ def detect_ai_intent(
         "paper",
         "papers",
         "journal",
-        "study",
-        "studies",
         "latest research",
         "literature",
         "citation",
@@ -2779,156 +2783,45 @@ AI_TOOLS = [
 
 
 # ============================================================
+# JSON-SAFE AI TOOL RESULTS
+# ============================================================
+
+def make_json_safe(value):
+    return json.loads(json.dumps(value, default=str))
+
+
+# ============================================================
 # EXECUTE AI TOOL
 # ============================================================
 
-def execute_ai_tool(
-    tool_name: str,
-    arguments: dict,
-    db: Session
-):
+def execute_ai_tool(tool_name: str, arguments: dict, db: Session):
     try:
-
-        # ----------------------------------------------------
-        # FIND SYLLABUS TOPIC
-        # ----------------------------------------------------
-
         if tool_name == "find_syllabus_topic":
-
-            return ai_find_syllabus_topic(
-                query=arguments["query"],
-                subject_id=arguments["subject_id"],
-                db=db
-            )
-
-        # ----------------------------------------------------
-        # MARK TOPIC COMPLETED
-        # ----------------------------------------------------
-
-        if tool_name == "mark_topic_completed":
-
-            return ai_mark_topic_completed(
-                topic_id=arguments["topic_id"],
-                db=db
-            )
-
-        # ----------------------------------------------------
-        # UPDATE TOPIC MASTERY
-        # ----------------------------------------------------
-
-        if tool_name == "update_topic_mastery":
-
-            return ai_update_topic_mastery(
-                topic_id=arguments["topic_id"],
-                mastery=arguments["mastery"],
-                db=db
-            )
-
-        # ----------------------------------------------------
-        # CREATE TASK
-        # ----------------------------------------------------
-
-        if tool_name == "create_task":
-
-            return ai_create_task(
-                title=arguments["title"],
-                description=arguments["description"],
-                subject_id=arguments["subject_id"],
-                due_date=arguments["due_date"],
-                priority=arguments["priority"],
-                status=arguments["status"],
-                db=db
-            )
-
-        # ----------------------------------------------------
-        # UPDATE TASK
-        # ----------------------------------------------------
-
-        if tool_name == "update_task":
-
-            return ai_update_task(
-                task_id=arguments["task_id"],
-                title=arguments["title"],
-                description=arguments["description"],
-                subject_id=arguments["subject_id"],
-                due_date=arguments["due_date"],
-                priority=arguments["priority"],
-                status=arguments["status"],
-                db=db
-            )
-
-        # ----------------------------------------------------
-        # DELETE TASK
-        # ----------------------------------------------------
-
-        if tool_name == "delete_task":
-
-            return ai_delete_task(
-                task_id=arguments["task_id"],
-                db=db
-            )
-
-        # ----------------------------------------------------
-        # CREATE STUDY SESSION
-        # ----------------------------------------------------
-
-        if tool_name == "create_study_session":
-
-            return ai_create_study_session(
-                subject_id=arguments["subject_id"],
-                topic=arguments["topic"],
-                duration_minutes=arguments["duration_minutes"],
-                start_time=arguments["start_time"],
-                end_time=arguments["end_time"],
-                notes=arguments["notes"],
-                db=db
-            )
-
-        # ----------------------------------------------------
-        # UPDATE STUDY SESSION
-        # ----------------------------------------------------
-
-        if tool_name == "update_study_session":
-
-            return ai_update_study_session(
-                session_id=arguments["session_id"],
-                subject_id=arguments["subject_id"],
-                topic=arguments["topic"],
-                duration_minutes=arguments["duration_minutes"],
-                start_time=arguments["start_time"],
-                end_time=arguments["end_time"],
-                notes=arguments["notes"],
-                db=db
-            )
-
-        # ----------------------------------------------------
-        # DELETE STUDY SESSION
-        # ----------------------------------------------------
-
-        if tool_name == "delete_study_session":
-
-            return ai_delete_study_session(
-                session_id=arguments["session_id"],
-                db=db
-            )
-
-        return {
-            "success": False,
-            "error": f"Unknown AI tool: {tool_name}"
-        }
-
+            result = ai_find_syllabus_topic(arguments["query"], arguments["subject_id"], db)
+        elif tool_name == "mark_topic_completed":
+            result = ai_mark_topic_completed(arguments["topic_id"], db)
+        elif tool_name == "update_topic_mastery":
+            result = ai_update_topic_mastery(arguments["topic_id"], arguments["mastery"], db)
+        elif tool_name == "create_task":
+            result = ai_create_task(arguments["title"], arguments["description"], arguments["subject_id"], arguments["due_date"], arguments["priority"], arguments["status"], db)
+        elif tool_name == "update_task":
+            result = ai_update_task(arguments["task_id"], arguments["title"], arguments["description"], arguments["subject_id"], arguments["due_date"], arguments["priority"], arguments["status"], db)
+        elif tool_name == "delete_task":
+            result = ai_delete_task(arguments["task_id"], db)
+        elif tool_name == "create_study_session":
+            result = ai_create_study_session(arguments["subject_id"], arguments["topic"], arguments["duration_minutes"], arguments["start_time"], arguments["end_time"], arguments["notes"], db)
+        elif tool_name == "update_study_session":
+            result = ai_update_study_session(arguments["session_id"], arguments["subject_id"], arguments["topic"], arguments["duration_minutes"], arguments["start_time"], arguments["end_time"], arguments["notes"], db)
+        elif tool_name == "delete_study_session":
+            result = ai_delete_study_session(arguments["session_id"], db)
+        else:
+            result = {"success": False, "error": f"Unknown AI tool: {tool_name}"}
+        return make_json_safe(result)
     except Exception as error:
-
         db.rollback()
+        print(f"AI tool execution failed: {repr(error)}")
+        return {"success": False, "error": str(error)}
 
-        print(
-            f"AI tool execution failed: {repr(error)}"
-        )
-
-        return {
-            "success": False,
-            "error": "Tool execution failed"
-        }
 
 
 # ============================================================
@@ -2938,9 +2831,25 @@ def execute_ai_tool(
 def build_ai_system_prompt(
     student_context
 ):
+    current_datetime = get_app_now().isoformat()
+    current_date = get_app_now().date().isoformat()
+
     return f"""
 You are StudentOS AI, the personal academic assistant inside the
 StudentOS student management application.
+
+CURRENT DATE AND TIME:
+{current_datetime}
+CURRENT DATE:
+{current_date}
+TIMEZONE:
+{APP_TIMEZONE}
+
+DATE RULES:
+- Treat the current date above as authoritative.
+- Interpret today, tomorrow, yesterday, next week, and this week from it.
+- Never use a stale date from training data or conversation history.
+- When creating or updating tasks, calculate relative dates from this date.
 
 Your job is to help the student learn, plan, organize, research,
 and track academic progress.
@@ -3212,265 +3121,141 @@ def extract_research_query(message: str) -> str:
     return query if query else text
 
 
-def normalize_gemini_schema(schema):
-    """Convert OpenAI-style JSON schemas into Gemini-compatible schemas."""
-    if not isinstance(schema, dict):
-        return schema
-
-    normalized = {}
-
-    for key, value in schema.items():
-
-        if key in {"additionalProperties", "strict"}:
+def build_groq_messages(request, system_prompt):
+    messages = [{"role": "system", "content": system_prompt}]
+    for message in (request.history or [])[-12:]:
+        role = message.role.lower().strip()
+        if role not in {"user", "assistant"}:
             continue
-
-        if key == "type" and isinstance(value, list):
-
-            non_null_types = [
-                item
-                for item in value
-                if item != "null"
-            ]
-
-            if non_null_types:
-                normalized["type"] = non_null_types[0]
-                normalized["nullable"] = "null" in value
-
-            continue
-
-        if key == "properties" and isinstance(value, dict):
-
-            normalized[key] = {
-                name: normalize_gemini_schema(
-                    prop_schema
-                )
-                for name, prop_schema in value.items()
-            }
-
-            continue
-
-        if key == "items" and isinstance(value, dict):
-
-            normalized[key] = normalize_gemini_schema(
-                value
-            )
-
-            continue
-
-        normalized[key] = value
-
-    return normalized
+        content = message.content.strip()
+        if content:
+            messages.append({"role": role, "content": content})
+    messages.append({"role": "user", "content": request.message})
+    return messages
 
 
-def build_gemini_tools():
-    """
-    Convert the existing StudentOS AI tool definitions
-    into Gemini function declarations.
-    """
-
-    declarations = []
+def build_groq_tools():
+    """Convert StudentOS canonical tools to Groq/OpenAI tool format."""
+    groq_tools = []
 
     for tool in AI_TOOLS:
-
         if tool.get("type") != "function":
             continue
 
-        declaration = types.FunctionDeclaration(
-            name=tool["name"],
-            description=tool.get(
-                "description",
-                ""
-            ),
-            parameters=normalize_gemini_schema(
-                tool.get(
+        groq_tools.append({
+            "type": "function",
+            "function": {
+                "name": tool["name"],
+                "description": tool.get("description", ""),
+                "parameters": tool.get(
                     "parameters",
-                    {}
+                    {"type": "object", "properties": {}}
                 )
-            )
-        )
+            }
+        })
 
-        declarations.append(
-            declaration
-        )
-
-    return [
-        types.Tool(
-            function_declarations=declarations
-        )
-    ]
+    return groq_tools
 
 
-async def generate_gemini_response(
-    contents,
-    system_prompt: str
-):
-    """
-    Generate a Gemini response while allowing
-    StudentOS function tools.
-    """
-
-    if gemini_client is None:
-
+async def generate_groq_response(messages):
+    if groq_client is None:
         raise HTTPException(
             status_code=503,
             detail=(
-                "Gemini is not configured. "
-                "Check GEMINI_API_KEY in the backend .env file."
+                "Groq is not configured. "
+                "Check GROQ_API_KEY in the backend .env file."
             )
         )
 
-    return await gemini_client.aio.models.generate_content(
-        model=GEMINI_MODEL,
-        contents=contents,
-        config=types.GenerateContentConfig(
-            system_instruction=system_prompt,
-            tools=build_gemini_tools()
-        )
+    return await groq_client.chat.completions.create(
+        model=AI_MODEL,
+        messages=messages,
+        tools=build_groq_tools(),
+        tool_choice="auto",
+        temperature=0.2,
+        max_tokens=1000
     )
 
 
+async def ai_chat_with_groq(request, system_prompt, db):
+    messages = build_groq_messages(request, system_prompt)
+    for _ in range(5):
+        response = await generate_groq_response(messages)
+        assistant_message = response.choices[0].message
+        tool_calls = assistant_message.tool_calls or []
+        if not tool_calls:
+            return assistant_message.content or "The AI completed the requested action, but did not return a text response."
+
+        assistant_payload = {
+            "role": "assistant",
+            "content": assistant_message.content or "",
+            "tool_calls": []
+        }
+        for tool_call in tool_calls:
+            assistant_payload["tool_calls"].append({
+                "id": tool_call.id,
+                "type": "function",
+                "function": {
+                    "name": tool_call.function.name,
+                    "arguments": tool_call.function.arguments
+                }
+            })
+        messages.append(assistant_payload)
+
+        for tool_call in tool_calls:
+            tool_name = tool_call.function.name
+            try:
+                arguments = json.loads(tool_call.function.arguments or "{}")
+                print(f"AI tool call: {tool_name} {arguments}")
+                tool_result = execute_ai_tool(tool_name, arguments, db)
+            except Exception as error:
+                print(f"AI tool call parsing failed: {repr(error)}")
+                tool_result = {"success": False, "error": str(error)}
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tool_call.id,
+                "content": json.dumps(make_json_safe(tool_result), ensure_ascii=False)
+            })
+
+    return "The AI reached the maximum number of tool steps. Please try the request again."
+
+
 @app.post("/ai/chat")
-async def ai_chat(
-    request: AIChatRequest,
-    db: Session = Depends(get_db)
-):
-
+async def ai_chat(request: AIChatRequest, db: Session = Depends(get_db)):
     if not request.message.strip():
-
-        raise HTTPException(
-            status_code=400,
-            detail="AI message cannot be empty"
-        )
-
-    if gemini_client is None:
-
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                "Gemini is not configured. "
-                "Check GEMINI_API_KEY in the backend .env file."
-            )
-        )
+        raise HTTPException(status_code=400, detail="AI message cannot be empty")
+    if AI_PROVIDER != "groq":
+        raise HTTPException(status_code=400, detail=f"Unsupported AI_PROVIDER '{AI_PROVIDER}'. Set AI_PROVIDER=groq.")
+    if groq_client is None:
+        raise HTTPException(status_code=503, detail="Groq is not configured. Check GROQ_API_KEY in the backend .env file.")
 
     try:
-
-        # ====================================================
-        # GET CURRENT STUDENT CONTEXT
-        # ====================================================
-
-        student_context = get_student_context(
-            db=db,
-            subject_id=request.subject_id
-        )
-
-        # ====================================================
-        # BUILD SYSTEM PROMPT
-        # ====================================================
-
-        system_prompt = build_ai_system_prompt(
-            student_context
-        )
-
-        # ====================================================
-        # DETECT AI INTENT
-        # ====================================================
-
-        intent = detect_ai_intent(
-            request.message
-        )
-
+        student_context = get_student_context(db=db, subject_id=request.subject_id)
+        system_prompt = build_ai_system_prompt(student_context)
+        intent = detect_ai_intent(request.message)
         research_results = []
-
         research_context = ""
-
         research_query = None
 
-        # ====================================================
-        # RESEARCH SEARCH
-        # ====================================================
-
-        if intent in [
-            "RESEARCH",
-            "BOTH"
-        ]:
-
-            research_query = extract_research_query(
-                request.message
-            )
-
-            print(
-                "OpenAlex AI research query:",
-                research_query
-            )
-
+        if intent in ["RESEARCH", "BOTH"]:
+            research_query = extract_research_query(request.message)
+            print("OpenAlex AI research query:", research_query)
             try:
-
-                research_data = await search_openalex(
-                    research_query,
-                    limit=5
-                )
-
-                research_results = research_data.get(
-                    "results",
-                    []
-                )
-
-                print(
-                    "OpenAlex AI research results:",
-                    len(research_results)
-                )
-
-                # ------------------------------------------------
-                # RESULTS FOUND
-                # ------------------------------------------------
-
+                research_data = await search_openalex(research_query, limit=5)
+                research_results = research_data.get("results", [])
+                print("OpenAlex AI research results:", len(research_results))
                 if research_results:
-
                     research_context = f"""
 VERIFIED RESEARCH RESULTS FROM STUDENTOS OPENALEX
 
-IMPORTANT:
-
-The OpenAlex search successfully returned
-{len(research_results)} verified research papers.
-
-The student's research query was:
-
-"{research_query}"
-
-DO NOT say that no papers were found.
-
-DO NOT say that the research search failed.
-
-DO NOT invent additional papers.
-
-Use the papers below as the ONLY verified
-research sources for this request.
-
+The OpenAlex search returned {len(research_results)} verified research papers.
+The student's research query was: "{research_query}"
+Use the papers below as the ONLY verified research sources for this request.
 The paper metadata comes directly from OpenAlex.
-
 """
-
-                    for index, paper in enumerate(
-                        research_results,
-                        start=1
-                    ):
-
-                        authors = paper.get(
-                            "authors",
-                            []
-                        )
-
-                        author_text = (
-                            ", ".join(
-                                author
-                                for author in authors
-                                if author
-                            )
-                            if authors
-                            else "Authors unavailable"
-                        )
-
+                    for index, paper in enumerate(research_results, start=1):
+                        authors = paper.get("authors", [])
+                        author_text = ", ".join(a for a in authors if a) if authors else "Authors unavailable"
                         research_context += f"""
 PAPER {index}
 
@@ -3506,314 +3291,36 @@ Abstract:
 
 ----------------------------------------
 """
-
-                # ------------------------------------------------
-                # NO RESULTS
-                # ------------------------------------------------
-
                 else:
-
-                    research_context = f"""
-VERIFIED RESEARCH SEARCH RESULT
-
-OpenAlex was searched using:
-
-"{research_query}"
-
-The search returned zero papers.
-
-Therefore, do not invent papers, citations,
-authors, DOI links, publication years, or findings.
-
-You may suggest a narrower search query
-to the student.
-"""
-
+                    research_context = f"""OpenAlex was searched using "{research_query}" and returned zero papers. Do not invent papers, citations, authors, DOI links, publication years, or findings."""
             except Exception as research_error:
-
-                print(
-                    "OpenAlex research retrieval failed:",
-                    repr(research_error)
-                )
-
+                print("OpenAlex research retrieval failed:", repr(research_error))
                 research_results = []
-
-                research_context = """
-VERIFIED RESEARCH SEARCH STATUS
-
-The StudentOS research service could not
-retrieve verified research results right now.
-
-Do not invent papers, citations, authors,
-DOIs, publication years, or research findings.
-
-Tell the student that verified research
-results could not be retrieved right now.
-"""
-
-        # ====================================================
-        # ADD RESEARCH INFORMATION TO AI INSTRUCTIONS
-        # ====================================================
+                research_context = ""
 
         if research_context:
+            system_prompt += "\n\n" + research_context + "\n\nNever fabricate research information. Use retrieved metadata exactly as supplied. If zero papers were returned, say so clearly."
 
-            system_prompt += "\n\n"
-
-            system_prompt += research_context
-
-            system_prompt += """
-
-RESEARCH RESPONSE RULES
-
-1. If verified papers are provided above,
-   acknowledge that papers were retrieved
-   from StudentOS Research/OpenAlex.
-
-2. If papers are provided,
-   NEVER say that no papers were found.
-
-3. Use retrieved metadata exactly as supplied.
-
-4. Never fabricate a paper.
-
-5. Never fabricate an author.
-
-6. Never fabricate a DOI.
-
-7. Never fabricate citation counts.
-
-8. Never claim to have read the complete
-   paper unless the retrieved information
-   actually contains the complete paper.
-
-9. Summarize abstracts only from information
-   supported by them.
-
-10. If the student asks which paper may be
-    useful, compare only the available
-    metadata and abstracts.
-
-11. If zero papers were returned, clearly
-    say that zero verified results were
-    returned.
-
-12. Do not contradict the verified research
-    result supplied above.
-"""
-
-        # ====================================================
-        # BUILD GEMINI CONVERSATION
-        # ====================================================
-
-        contents = []
-
-        if request.history:
-
-            for message in request.history[-12:]:
-
-                role = message.role.lower().strip()
-
-                if role not in [
-                    "user",
-                    "assistant"
-                ]:
-                    continue
-
-                content = message.content.strip()
-
-                if not content:
-                    continue
-
-                gemini_role = (
-                    "model"
-                    if role == "assistant"
-                    else "user"
-                )
-
-                contents.append(
-                    types.Content(
-                        role=gemini_role,
-                        parts=[
-                            types.Part.from_text(
-                                text=content
-                            )
-                        ]
-                    )
-                )
-
-        contents.append(
-            types.Content(
-                role="user",
-                parts=[
-                    types.Part.from_text(
-                        text=request.message
-                    )
-                ]
-            )
-        )
-
-        # ====================================================
-        # GEMINI REQUEST + TOOL LOOP
-        # ====================================================
-
-        max_tool_rounds = 5
-
-        tool_round = 0
-
-        response = await generate_gemini_response(
-            contents=contents,
-            system_prompt=system_prompt
-        )
-
-        while tool_round < max_tool_rounds:
-
-            function_calls = getattr(
-                response,
-                "function_calls",
-                None
-            )
-
-            if not function_calls:
-                break
-
-            tool_round += 1
-
-            # Preserve Gemini's tool-call message.
-
-            if response.candidates:
-
-                model_content = (
-                    response.candidates[0].content
-                )
-
-                if model_content:
-
-                    contents.append(
-                        model_content
-                    )
-
-            tool_response_parts = []
-
-            for function_call in function_calls:
-
-                tool_name = function_call.name
-
-                arguments = dict(
-                    function_call.args or {}
-                )
-
-                print(
-                    f"AI tool call: "
-                    f"{tool_name} "
-                    f"{arguments}"
-                )
-
-                try:
-
-                    tool_result = execute_ai_tool(
-                        tool_name=tool_name,
-                        arguments=arguments,
-                        db=db
-                    )
-
-                except Exception as tool_error:
-
-                    print(
-                        f"AI tool execution failed: "
-                        f"{repr(tool_error)}"
-                    )
-
-                    tool_result = {
-                        "success": False,
-                        "error": str(
-                            tool_error
-                        )
-                    }
-
-                tool_response_parts.append(
-                    types.Part.from_function_response(
-                        name=tool_name,
-                        response=tool_result
-                    )
-                )
-
-            contents.append(
-                types.Content(
-                    role="user",
-                    parts=tool_response_parts
-                )
-            )
-
-            response = await generate_gemini_response(
-                contents=contents,
-                system_prompt=system_prompt
-            )
-
-        # ====================================================
-        # FINAL ANSWER
-        # ====================================================
-
-        answer = getattr(
-            response,
-            "text",
-            None
-        )
-
-        if not answer:
-
-            answer = (
-                "The AI completed the requested action, "
-                "but did not return a text response."
-            )
-
-        # ====================================================
-        # REFRESH STUDENT CONTEXT
-        # ====================================================
-
-        updated_context = get_student_context(
-            db=db,
-            subject_id=request.subject_id
-        )
-
-        # ====================================================
-        # RETURN RESPONSE
-        # ====================================================
-
+        answer = await ai_chat_with_groq(request, system_prompt, db)
+        updated_context = get_student_context(db=db, subject_id=request.subject_id)
         return {
             "message": request.message,
             "answer": answer,
-            "model": GEMINI_MODEL,
+            "model": AI_MODEL,
+            "provider": AI_PROVIDER,
             "intent": intent,
             "research_query": research_query,
             "research_results": research_results,
             "context": {
-                "overall_progress": updated_context[
-                    "overall_progress"
-                ],
-                "selected_subject": updated_context[
-                    "selected_subject"
-                ]
+                "overall_progress": updated_context["overall_progress"],
+                "selected_subject": updated_context["selected_subject"]
             }
         }
-
     except HTTPException:
-
         raise
-
     except Exception as error:
-
-        print(
-            f"Gemini request failed: "
-            f"{repr(error)}"
-        )
-
-        raise HTTPException(
-            status_code=500,
-            detail=(
-                "AI request failed. "
-                "Check the backend terminal for details."
-            )
-        )
+        print(f"AI request failed ({AI_PROVIDER}): {repr(error)}")
+        raise HTTPException(status_code=500, detail="AI request failed. Check the backend terminal for details.")
 
 
 # ================================

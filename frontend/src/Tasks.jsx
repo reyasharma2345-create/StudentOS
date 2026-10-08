@@ -18,6 +18,10 @@ function formatDate(dateString) {
 
   const date = new Date(`${dateString}T00:00:00`);
 
+  if (Number.isNaN(date.getTime())) {
+    return "No due date";
+  }
+
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
@@ -43,7 +47,10 @@ function convertTask(task) {
     id: task.id,
     title: task.title,
     description: task.description,
-    subject: task.subject_short_name || task.subject_name || "Unknown",
+    subject:
+      task.subject_short_name ||
+      task.subject_name ||
+      "Unknown",
     subjectName: task.subject_name || "",
     subjectId: task.subject_id,
     dueDate: task.due_date || "",
@@ -89,10 +96,36 @@ function Tasks() {
 
       const data = await response.json();
 
-      setTasks(data.tasks.map(convertTask));
+      /*
+       * Backend currently returns:
+       *
+       * {
+       *   value: [...],
+       *   Count: 2
+       * }
+       *
+       * Older/alternate responses may return:
+       *
+       * {
+       *   tasks: [...]
+       * }
+       *
+       * Normalize both formats so tasks state is ALWAYS an array.
+       */
+      const taskList = Array.isArray(data)
+        ? data
+        : Array.isArray(data?.value)
+          ? data.value
+          : Array.isArray(data?.tasks)
+            ? data.tasks
+            : [];
+
+      setTasks(taskList.map(convertTask));
       setError("");
     } catch (error) {
       console.error(error);
+
+      setTasks([]);
 
       setError(
         "Unable to load tasks. Make sure the StudentOS backend is running."
@@ -114,9 +147,25 @@ function Tasks() {
 
       const data = await response.json();
 
-      setSubjects(data.subjects);
+      /*
+       * Normalize subjects as well.
+       * This supports:
+       *   { subjects: [...] }
+       *   [...]
+       */
+      const subjectList = Array.isArray(data)
+        ? data
+        : Array.isArray(data?.subjects)
+          ? data.subjects
+          : Array.isArray(data?.value)
+            ? data.value
+            : [];
+
+      setSubjects(subjectList);
     } catch (error) {
       console.error(error);
+
+      setSubjects([]);
 
       setError(
         "Unable to load subjects. Make sure the StudentOS backend is running."
@@ -200,9 +249,17 @@ function Tasks() {
         throw new Error(data.detail || "Failed to create task.");
       }
 
-      const newTask = convertTask(data.task);
+      const createdTask =
+        data?.task ||
+        data?.value ||
+        data;
 
-      setTasks((current) => [...current, newTask]);
+      const newTask = convertTask(createdTask);
+
+      setTasks((current) => [
+        ...(Array.isArray(current) ? current : []),
+        newTask,
+      ]);
 
       setShowModal(false);
 
@@ -230,7 +287,9 @@ function Tasks() {
       return;
     }
 
-    const newStatus = task.completed ? "Pending" : "Completed";
+    const newStatus = task.completed
+      ? "Pending"
+      : "Completed";
 
     try {
       const response = await fetch(`${API_URL}/tasks/${id}`, {
@@ -251,24 +310,39 @@ function Tasks() {
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.detail || "Failed to update task.");
+        throw new Error(
+          data.detail || "Failed to update task."
+        );
       }
 
-      const updatedTask = convertTask(data.task);
+      const updatedTask =
+        data?.task ||
+        data?.value ||
+        data;
+
+      const convertedTask = convertTask(updatedTask);
 
       setTasks((current) =>
-        current.map((item) =>
-          item.id === id ? updatedTask : item
+        (Array.isArray(current) ? current : []).map(
+          (item) =>
+            item.id === id ? convertedTask : item
         )
       );
     } catch (error) {
       console.error(error);
 
-      setError(error.message || "Unable to update task.");
+      setError(
+        error.message || "Unable to update task."
+      );
     }
   }
 
-  const filteredTasks = tasks.filter((task) => {
+  const safeTasks = Array.isArray(tasks) ? tasks : [];
+  const safeSubjects = Array.isArray(subjects)
+    ? subjects
+    : [];
+
+  const filteredTasks = safeTasks.filter((task) => {
     if (filter === "All") {
       return true;
     }
@@ -288,21 +362,19 @@ function Tasks() {
     return true;
   });
 
-  const completedCount = tasks.filter(
+  const completedCount = safeTasks.filter(
     (task) => task.completed
   ).length;
 
-  const pendingCount = tasks.filter(
+  const pendingCount = safeTasks.filter(
     (task) => !task.completed
   ).length;
 
   return (
     <section className="dashboard-content">
-
       {/* HEADER */}
 
       <div className="tasks-header">
-
         <div>
           <span className="eyebrow">
             ACADEMIC WORKFLOW
@@ -311,7 +383,8 @@ function Tasks() {
           <h1>Your Tasks</h1>
 
           <p>
-            Stay on top of assignments, deadlines and study work.
+            Stay on top of assignments, deadlines and
+            study work.
           </p>
         </div>
 
@@ -323,9 +396,7 @@ function Tasks() {
           <Plus size={16} />
           Add Task
         </button>
-
       </div>
-
 
       {/* ERROR */}
 
@@ -336,7 +407,8 @@ function Tasks() {
             padding: "14px 16px",
             borderRadius: "12px",
             background: "rgba(155, 44, 44, 0.08)",
-            border: "1px solid rgba(155, 44, 44, 0.2)",
+            border:
+              "1px solid rgba(155, 44, 44, 0.2)",
             color: "#7f1d1d",
             fontSize: "14px",
           }}
@@ -345,29 +417,21 @@ function Tasks() {
         </div>
       )}
 
-
       {/* SUMMARY */}
 
       <div className="task-summary">
-
         <div className="task-summary-main">
-
           <span className="card-label">
             THIS WEEK
           </span>
 
-          <h2>
-            {pendingCount} tasks remaining
-          </h2>
+          <h2>{pendingCount} tasks remaining</h2>
 
-          <p>
-            {completedCount} tasks completed
-          </p>
-
+          <p>{completedCount} tasks completed</p>
         </div>
 
         <div className="task-summary-stat">
-          <strong>{tasks.length}</strong>
+          <strong>{safeTasks.length}</strong>
           <span>Total tasks</span>
         </div>
 
@@ -380,16 +444,12 @@ function Tasks() {
           <strong>{pendingCount}</strong>
           <span>Pending</span>
         </div>
-
       </div>
-
 
       {/* FILTERS */}
 
       <div className="tasks-toolbar">
-
         <div className="task-filters">
-
           {[
             "All",
             "Pending",
@@ -407,30 +467,23 @@ function Tasks() {
               {item}
             </button>
           ))}
-
         </div>
-
       </div>
-
 
       {/* TASK LIST */}
 
       <div className="task-list">
-
         {loading && (
           <div className="empty-task-state">
             <Clock3 size={24} />
 
-            <h3>
-              Loading tasks...
-            </h3>
+            <h3>Loading tasks...</h3>
 
             <p>
               Getting your tasks from StudentOS.
             </p>
           </div>
         )}
-
 
         {!loading &&
           filteredTasks.map((task) => (
@@ -440,7 +493,6 @@ function Tasks() {
                 task.completed ? "completed" : ""
               }`}
             >
-
               <button
                 type="button"
                 className={`task-checkbox ${
@@ -453,15 +505,10 @@ function Tasks() {
                 )}
               </button>
 
-
               <div className="task-main">
-
-                <h3>
-                  {task.title}
-                </h3>
+                <h3>{task.title}</h3>
 
                 <div className="task-details">
-
                   <span className="task-subject">
                     {task.subject}
                   </span>
@@ -470,15 +517,13 @@ function Tasks() {
                     <CalendarDays size={12} />
                     {task.date}
                   </span>
-
                 </div>
-
               </div>
-
 
               <div
                 className={`task-priority ${
-                  task.priority.toLowerCase()
+                  String(task.priority || "Medium")
+                    .toLowerCase()
                 }`}
               >
                 {task.priority === "High" && (
@@ -487,34 +532,28 @@ function Tasks() {
 
                 {task.priority}
               </div>
-
             </article>
           ))}
-
 
         {!loading &&
           filteredTasks.length === 0 && (
             <div className="empty-task-state">
-
               <Check size={24} />
 
               <h3>
-                {tasks.length === 0
+                {safeTasks.length === 0
                   ? "No tasks yet"
                   : "Nothing here"}
               </h3>
 
               <p>
-                {tasks.length === 0
+                {safeTasks.length === 0
                   ? "Your tasks will appear here once you add them."
                   : "No tasks match the current filter."}
               </p>
-
             </div>
           )}
-
       </div>
-
 
       {/* ADD TASK MODAL */}
 
@@ -527,22 +566,18 @@ function Tasks() {
             }
           }}
         >
-
           <div className="task-modal">
-
             <div className="task-modal-header">
-
               <div>
                 <span className="eyebrow">
                   ACADEMIC WORKFLOW
                 </span>
 
-                <h2>
-                  Add New Task
-                </h2>
+                <h2>Add New Task</h2>
 
                 <p>
-                  Create a task and connect it to a subject.
+                  Create a task and connect it to a
+                  subject.
                 </p>
               </div>
 
@@ -553,17 +588,13 @@ function Tasks() {
               >
                 <X size={20} />
               </button>
-
             </div>
-
 
             <form
               className="task-form"
               onSubmit={handleAddTask}
             >
-
               <div className="task-form-group">
-
                 <label htmlFor="task-title">
                   Task title
                 </label>
@@ -577,12 +608,9 @@ function Tasks() {
                   onChange={handleFormChange}
                   required
                 />
-
               </div>
 
-
               <div className="task-form-group">
-
                 <label htmlFor="task-description">
                   Description
                 </label>
@@ -595,14 +623,10 @@ function Tasks() {
                   onChange={handleFormChange}
                   rows="3"
                 />
-
               </div>
 
-
               <div className="task-form-row">
-
                 <div className="task-form-group">
-
                   <label htmlFor="task-subject">
                     Subject
                   </label>
@@ -614,29 +638,25 @@ function Tasks() {
                     onChange={handleFormChange}
                     required
                   >
-
                     <option value="">
                       {subjectsLoading
                         ? "Loading subjects..."
                         : "Select subject"}
                     </option>
 
-                    {subjects.map((subject) => (
+                    {safeSubjects.map((subject) => (
                       <option
                         key={subject.id}
                         value={subject.id}
                       >
-                        {subject.short_name} — {subject.name}
+                        {subject.short_name} —{" "}
+                        {subject.name}
                       </option>
                     ))}
-
                   </select>
-
                 </div>
 
-
                 <div className="task-form-group">
-
                   <label htmlFor="task-due-date">
                     Due date
                   </label>
@@ -648,14 +668,10 @@ function Tasks() {
                     value={formData.due_date}
                     onChange={handleFormChange}
                   />
-
                 </div>
-
               </div>
 
-
               <div className="task-form-group">
-
                 <label htmlFor="task-priority">
                   Priority
                 </label>
@@ -666,26 +682,17 @@ function Tasks() {
                   value={formData.priority}
                   onChange={handleFormChange}
                 >
-
-                  <option value="Low">
-                    Low
-                  </option>
+                  <option value="Low">Low</option>
 
                   <option value="Medium">
                     Medium
                   </option>
 
-                  <option value="High">
-                    High
-                  </option>
-
+                  <option value="High">High</option>
                 </select>
-
               </div>
 
-
               <div className="task-form-actions">
-
                 <button
                   type="button"
                   className="secondary-button"
@@ -698,7 +705,9 @@ function Tasks() {
                 <button
                   type="submit"
                   className="primary-button"
-                  disabled={saving || subjectsLoading}
+                  disabled={
+                    saving || subjectsLoading
+                  }
                 >
                   <Plus size={16} />
 
@@ -706,16 +715,11 @@ function Tasks() {
                     ? "Creating..."
                     : "Create Task"}
                 </button>
-
               </div>
-
             </form>
-
           </div>
-
         </div>
       )}
-
     </section>
   );
 }
